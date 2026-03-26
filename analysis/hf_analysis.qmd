@@ -1131,3 +1131,566 @@ walk(figs, ~cat(sprintf("  %-45s  %s KB\n", basename(.x), round(file.size(.x)/10
 cat("\n=== Tables ===\n")
 walk(tables, ~cat(sprintf("  %s\n", basename(.x))))
 ```
+
+---
+
+## Summary Index — Factor Analysis + Heterogeneity {#summary-index}
+
+> **Research question:** When we aggregate all domain indices into a single summary measure via factor analysis, do we see stronger or weaker treatment effect heterogeneity than for individual outcomes?
+
+### Step 1 — Factor Analysis to Construct Summary Index
+
+```{r}
+#| label: fa-setup
+#| code-fold: true
+
+# Domain index variables (standardized at construction)
+idx_vars <- c("IN_CH", "IN_BFI", "IN_CF", "IN_PRIKNOW_CH", "IN_EPDS", "IN_DASS", "IN_SS")
+
+# Check which are present in the data
+idx_present <- idx_vars[idx_vars %in% names(df)]
+cat(glue("{length(idx_present)} of {length(idx_vars)} domain indices found in data\n"))
+cat("Present: ", paste(idx_present, collapse = ", "), "\n")
+
+# Subset to complete cases for factor analysis
+idx_data     <- df[, idx_present, drop = FALSE]
+idx_complete <- na.omit(idx_data)
+cat(glue("Complete-case sample for FA: {nrow(idx_complete)} obs (of {nrow(df)} total)\n"))
+
+# Factor analysis — extract first factor (no rotation for single factor)
+fa_result <- factanal(idx_complete, factors = 1, rotation = "none", scores = "regression")
+print(fa_result)
+
+# Variance explained
+ss_loadings   <- sum(fa_result$loadings[, 1]^2)
+prop_var      <- ss_loadings / length(idx_present)
+cat(glue("\nFactor 1 SS loadings: {round(ss_loadings, 4)}\n"))
+cat(glue("Proportion of variance explained: {round(prop_var * 100, 1)}%\n"))
+
+# Extract loadings into a tidy tibble
+loadings_df <- tibble(
+  outcome = idx_present,
+  loading = as.numeric(fa_result$loadings[, 1]),
+  uniqueness = fa_result$uniquenesses[idx_present]
+)
+print(loadings_df)
+```
+
+#### Factor Loadings
+
+```{r}
+#| label: fa-loadings-plot
+#| fig-cap: "Factor loadings on the first factor from exploratory factor analysis of domain indices. Bars pointing right indicate positive association with the summary factor."
+
+loadings_df <- loadings_df |>
+  mutate(
+    label = case_when(
+      outcome == "IN_CH"         ~ "Child Health",
+      outcome == "IN_BFI"        ~ "Breastfeeding Initiation",
+      outcome == "IN_CF"         ~ "Complementary Feeding",
+      outcome == "IN_PRIKNOW_CH" ~ "Caregiving Knowledge",
+      outcome == "IN_EPDS"       ~ "Maternal Mental Health (EPDS)",
+      outcome == "IN_DASS"       ~ "Caregiver Mental Health (DASS)",
+      outcome == "IN_SS"         ~ "Social Support",
+      TRUE                       ~ outcome
+    ),
+    label = fct_reorder(label, loading)
+  )
+
+ggplot(loadings_df, aes(x = loading, y = label)) +
+  geom_col(aes(fill = loading > 0), alpha = 0.85, width = 0.65) +
+  geom_text(aes(label = round(loading, 3),
+                hjust = ifelse(loading > 0, -0.15, 1.15)),
+            size = 3.6, color = HF_GRAY) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
+  scale_fill_manual(values = c("FALSE" = HF_ORANGE, "TRUE" = HF_TEAL), guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0.18, 0.22))) +
+  labs(
+    title    = "Factor Loadings on Summary Index (Factor 1)",
+    subtitle = glue(
+      "Proportion of variance explained: {round(prop_var * 100, 1)}% ",
+      "· N = {nrow(idx_complete)} complete cases"
+    ),
+    x        = "Loading on Factor 1",
+    y        = NULL,
+    caption  = "factanal() with maximum likelihood estimation; scores = 'regression'."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_fa_loadings.png"), width = 9, height = 5, dpi = 200)
+```
+
+#### Construct Summary Index for All Observations
+
+```{r}
+#| label: fa-index-construct
+#| code-fold: true
+
+# Factor score weights from factanal regression scores
+# Weight vector = R^{-1} * loadings  (factanal stores these internally)
+# We reconstruct manually using the raw regression weight approach:
+#   scores = data_std %*% solve(cor(data)) %*% loadings
+fa_weights <- as.numeric(solve(cor(idx_complete)) %*% fa_result$loadings[, 1])
+names(fa_weights) <- idx_present
+
+cat("Factor score regression weights:\n")
+print(round(fa_weights, 4))
+
+# Compute weighted sum for ALL obs (only where all indices non-missing)
+# Scale each index before applying weights (z-score using complete-case means/sds)
+idx_means <- colMeans(idx_complete)
+idx_sds   <- apply(idx_complete, 2, sd)
+
+# Standardize and compute score for full df
+summary_index <- apply(df[, idx_present, drop = FALSE], 1, function(row) {
+  if (any(is.na(row))) return(NA_real_)
+  z <- (row - idx_means) / idx_sds
+  sum(z * fa_weights)
+})
+
+# Standardize the summary index itself to mean-0, sd-1
+summary_index <- (summary_index - mean(summary_index, na.rm = TRUE)) /
+                  sd(summary_index, na.rm = TRUE)
+
+df$summary_index <- summary_index
+
+n_summary <- sum(!is.na(summary_index))
+cat(glue("\nSummary index constructed for {n_summary} obs ({round(100*n_summary/nrow(df),1)}% of sample)\n"))
+cat(glue("Mean: {round(mean(summary_index, na.rm=TRUE), 4)},  SD: {round(sd(summary_index, na.rm=TRUE), 4)}\n"))
+```
+
+#### Distribution of Summary Index by Treatment Arm
+
+```{r}
+#| label: fa-index-hist
+#| fig-cap: "Distribution of the factor-based summary index by treatment arm."
+
+df |>
+  filter(!is.na(summary_index)) |>
+  mutate(arm = if_else(treat == 1, "Treatment", "Control")) |>
+  ggplot(aes(x = summary_index, fill = arm)) +
+  geom_histogram(alpha = 0.7, bins = 35, position = "identity") +
+  scale_fill_manual(values = c("Treatment" = HF_TEAL, "Control" = HF_ORANGE)) +
+  labs(
+    title    = "Summary Index Distribution by Treatment Arm",
+    subtitle = "Factor 1 score from domain indices · standardized",
+    x        = "Summary Index (z-score)",
+    y        = "Count",
+    fill     = NULL,
+    caption  = "Summary index = weighted composite of 7 domain indices via factor analysis."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    legend.position = "top",
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_index_hist.png"), width = 9, height = 5, dpi = 200)
+```
+
+---
+
+### Step 2 — CATE on Summary Index
+
+```{r}
+#| label: summary-cate-setup
+#| code-fold: true
+
+# Build dataset with all required variables for CATE
+# Use same cate_vars covariate matrix as prior CATE analyses
+summary_cf_df <- df |>
+  select(all_of(c("summary_index", "treat", "TID", cate_vars))) |>
+  drop_na()
+
+cat(glue("Summary-index CATE sample: {nrow(summary_cf_df)} obs (of {nrow(df)} total)\n"))
+
+Y_summary      <- as.numeric(summary_cf_df$summary_index)
+W_summary      <- as.numeric(summary_cf_df$treat)
+X_summary      <- summary_cf_df |> select(all_of(cate_vars)) |> as.matrix()
+clusters_sum   <- as.integer(as.factor(summary_cf_df$TID))
+
+# Fit causal forest
+cf_summary <- causal_forest(
+  X_summary, Y_summary, W_summary,
+  clusters  = clusters_sum,
+  num.trees = 2000,
+  seed      = 2026
+)
+
+ate_summary <- average_treatment_effect(cf_summary)
+cates_sum   <- predict(cf_summary)$predictions
+
+cat(glue(
+  "\n=== ATE on Summary Index ===\n",
+  "  Estimate : {round(ate_summary['estimate'], 4)}\n",
+  "  Std. Err.: {round(ate_summary['std.err'], 4)}\n",
+  "  95% CI   : [{round(ate_summary['estimate'] - 1.96*ate_summary['std.err'], 4)},",
+  " {round(ate_summary['estimate'] + 1.96*ate_summary['std.err'], 4)}]\n"
+))
+```
+
+#### CATE Distribution
+
+```{r}
+#| label: summary-cate-dist
+#| fig-cap: "Distribution of individual-level CATE estimates for the summary index. Orange line = ATE."
+
+ate_sum_val <- ate_summary[["estimate"]]
+ate_sum_lo  <- ate_sum_val - 1.96 * ate_summary[["std.err"]]
+ate_sum_hi  <- ate_sum_val + 1.96 * ate_summary[["std.err"]]
+
+tibble(cate = cates_sum) |>
+  ggplot(aes(x = cate)) +
+  geom_histogram(bins = 40, fill = HF_BLUE, alpha = 0.75, color = "white") +
+  geom_vline(xintercept = ate_sum_val, color = HF_ORANGE, linewidth = 1.3) +
+  geom_vline(xintercept = c(ate_sum_lo, ate_sum_hi),
+             color = HF_ORANGE, linewidth = 0.7, linetype = "dashed") +
+  annotate("text", x = ate_sum_val + 0.002, y = Inf, vjust = 1.5, hjust = 0,
+           label = glue("ATE = {round(ate_sum_val, 3)}"),
+           color = HF_ORANGE, fontface = "bold", size = 3.8) +
+  labs(
+    title    = "CATE Distribution — Summary Index",
+    subtitle = glue("N = {nrow(summary_cf_df)} · Causal forest · 2,000 trees · clustered by township"),
+    x        = "Estimated CATE (summary index z-score)",
+    y        = "Count",
+    caption  = "Orange line = ATE; dashed = 95% CI."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_cate_dist.png"), width = 9, height = 5, dpi = 200)
+```
+
+#### Variable Importance — Summary Index
+
+```{r}
+#| label: summary-var-importance
+#| fig-cap: "Variable importance from causal forest on summary index — which baseline characteristics drive heterogeneity in overall program impact?"
+
+vi_sum <- variable_importance(cf_summary)
+vi_sum_df <- tibble(
+  variable   = cate_vars,
+  importance = as.numeric(vi_sum)
+) |>
+  arrange(desc(importance)) |>
+  slice_head(n = 12) |>
+  mutate(variable = fct_reorder(variable, importance))
+
+ggplot(vi_sum_df, aes(x = importance, y = variable)) +
+  geom_col(fill = HF_TEAL, alpha = 0.85) +
+  geom_text(aes(label = round(importance, 3)), hjust = -0.1, size = 3.5, color = HF_GRAY) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.22))) +
+  labs(
+    title    = "Variable Importance — Summary Index CATE",
+    subtitle = "Which baseline characteristics drive overall treatment effect heterogeneity?",
+    x        = "Importance",
+    y        = NULL,
+    caption  = "Causal forest variable importance on summary index."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_var_importance.png"), width = 9, height = 5, dpi = 200)
+```
+
+#### BLP Test — Summary Index
+
+```{r}
+#| label: summary-blp
+#| code-fold: false
+
+blp_summary <- test_calibration(cf_summary)
+print(blp_summary)
+
+blp_sum_mat  <- as.matrix(blp_summary)
+blp_sum_coef <- blp_sum_mat["differential.forest.prediction", "Estimate"]
+blp_sum_se   <- blp_sum_mat["differential.forest.prediction", "Std. Error"]
+blp_sum_pval <- blp_sum_mat["differential.forest.prediction", ncol(blp_sum_mat)]
+
+cat(glue(
+  "\n=== BLP Test for Heterogeneity (Summary Index) ===\n",
+  "  Differential forest prediction: {round(blp_sum_coef, 4)}\n",
+  "  Std. Err.                     : {round(blp_sum_se, 4)}\n",
+  "  p-value                       : {round(blp_sum_pval, 4)}\n",
+  "\nInterpretation: A coefficient > 1 (p < 0.05) confirms that CATE predictions\n",
+  "are informative — families predicted to benefit more actually do.\n"
+))
+```
+
+#### Top-K Targeting Analysis — Summary Index
+
+```{r}
+#| label: summary-topk
+#| fig-cap: "Average treatment effects on summary index by predicted benefit group."
+
+summary_rank_df <- summary_cf_df |>
+  mutate(
+    cate = cates_sum,
+    Y    = Y_summary,
+    W    = W_summary
+  )
+
+thresh_20_sum <- quantile(summary_rank_df$cate, 0.80)
+thresh_50_sum <- quantile(summary_rank_df$cate, 0.50)
+
+compute_group_ate_sum <- function(sub_df) {
+  mu1 <- mean(sub_df$Y[sub_df$W == 1])
+  mu0 <- mean(sub_df$Y[sub_df$W == 0])
+  n1  <- sum(sub_df$W == 1)
+  n0  <- sum(sub_df$W == 0)
+  se  <- sqrt(var(sub_df$Y[sub_df$W == 1]) / n1 + var(sub_df$Y[sub_df$W == 0]) / n0)
+  tibble(est = mu1 - mu0, se = se, n = nrow(sub_df))
+}
+
+groups_sum <- list(
+  "Top 20%\n(highest predicted)"  = summary_rank_df |> filter(cate >= thresh_20_sum),
+  "Top 50%\n(above median)"       = summary_rank_df |> filter(cate >= thresh_50_sum),
+  "Bottom 50%\n(below median)"    = summary_rank_df |> filter(cate <  thresh_50_sum),
+  "All families\n(overall ATE)"   = summary_rank_df
+)
+
+topk_sum_res <- map_dfr(groups_sum, compute_group_ate_sum, .id = "group") |>
+  mutate(
+    ci_lo = est - 1.96 * se,
+    ci_hi = est + 1.96 * se,
+    sig   = ci_lo > 0 | ci_hi < 0,
+    group = fct_inorder(group)
+  )
+
+ggplot(topk_sum_res, aes(x = group, y = est, fill = sig)) +
+  geom_col(alpha = 0.85, width = 0.6) +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.2, linewidth = 1.1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = HF_GRAY) +
+  geom_text(aes(label = glue("{round(est, 3)}\n(n={n})"),
+                y = ci_hi + 0.01), size = 3.5, vjust = 0, color = HF_BLUE, fontface = "bold") +
+  scale_fill_manual(values = c("FALSE" = HF_GRAY, "TRUE" = HF_TEAL), guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  labs(
+    title    = "Treatment Effects by Predicted Benefit Group — Summary Index",
+    subtitle = "Families ranked by predicted CATE · Neyman estimator · 95% CI",
+    x        = NULL,
+    y        = "ATE (summary index z-score)",
+    caption  = "Top-K analysis on factor-based summary index."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_topk.png"), width = 9, height = 5, dpi = 200)
+```
+
+---
+
+### Step 3 — RATE on Summary Index
+
+```{r}
+#| label: summary-rate
+#| code-fold: true
+
+rate_summary <- rank_average_treatment_effect(cf_summary, cf_summary$predictions)
+
+rate_sum_est  <- rate_summary$estimate
+rate_sum_se   <- rate_summary$std.err
+rate_sum_pval <- 2 * pnorm(-abs(rate_sum_est / rate_sum_se))
+
+cat(glue(
+  "=== RATE Analysis — Summary Index ===\n",
+  "  RATE estimate: {round(rate_sum_est, 4)}\n",
+  "  Std. Err.    : {round(rate_sum_se, 4)}\n",
+  "  95% CI       : [{round(rate_sum_est - 1.96*rate_sum_se, 4)},",
+  " {round(rate_sum_est + 1.96*rate_sum_se, 4)}]\n",
+  "  p-value      : {round(rate_sum_pval, 4)}\n"
+))
+```
+
+#### TOC Curve — Summary Index
+
+```{r}
+#| label: summary-toc-curve
+#| fig-cap: "TOC curve for summary index — gains from targeting families predicted to benefit most."
+
+# Inspect structure before assuming column names
+str(rate_summary$TOC)
+
+toc_sum_raw <- as_tibble(rate_summary$TOC)
+names(toc_sum_raw) <- tolower(names(toc_sum_raw))
+
+toc_sum_df <- toc_sum_raw |>
+  rename_with(~ case_when(
+    . %in% c("fraction", "q")           ~ "fraction",
+    . %in% c("estimate", "toc")         ~ "toc_est",
+    . %in% c("std.err", "se", "stderr") ~ "toc_se",
+    TRUE                                ~ .
+  )) |>
+  mutate(
+    ci_lo = toc_est - 1.96 * toc_se,
+    ci_hi = toc_est + 1.96 * toc_se
+  )
+
+ate_sum_line <- ate_summary[["estimate"]]
+
+ggplot(toc_sum_df, aes(x = fraction, y = toc_est)) +
+  geom_ribbon(aes(ymin = pmin(toc_est, ate_sum_line),
+                  ymax = pmax(toc_est, ate_sum_line)),
+              fill = HF_TEAL, alpha = 0.25) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), fill = HF_BLUE, alpha = 0.15) +
+  geom_line(color = HF_BLUE, linewidth = 1.4) +
+  geom_hline(yintercept = ate_sum_line, color = HF_ORANGE, linewidth = 1.1, linetype = "dashed") +
+  annotate("text", x = 0.05, y = ate_sum_line + 0.005, hjust = 0,
+           label = glue("ATE = {round(ate_sum_line, 3)}"),
+           color = HF_ORANGE, fontface = "bold", size = 3.8) +
+  annotate("text", x = 0.5, y = max(toc_sum_df$toc_est, na.rm = TRUE) * 0.85,
+           label = glue("RATE = {round(rate_sum_est, 3)}\n(p = {round(rate_sum_pval, 3)})"),
+           color = HF_BLUE, fontface = "bold", size = 4, hjust = 0.5) +
+  scale_x_continuous(labels = scales::percent, breaks = seq(0, 1, 0.2)) +
+  labs(
+    title    = "TOC Curve — Gains from Targeting (Summary Index)",
+    subtitle = glue(
+      "RATE = {round(rate_sum_est, 3)} (SE = {round(rate_sum_se, 3)}, p = {round(rate_sum_pval, 3)})",
+      " · Shaded area = gain over uniform treatment"
+    ),
+    x        = "Fraction of population treated (ranked by predicted benefit)",
+    y        = "Average treatment effect for treated fraction (summary index)",
+    caption  = "Yadlowsky et al. (2021) RATE. X-axis: 0 = treat nobody; 1 = treat everyone."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_summary_toc_curve.png"), width = 9, height = 5.5, dpi = 200)
+```
+
+#### RATE Interpretation — Summary Index
+
+```{r}
+#| label: summary-rate-interp
+#| code-fold: false
+
+top20_sum <- topk_sum_res |> filter(str_starts(group, "Top 20")) |> pull(est)
+all_sum   <- topk_sum_res |> filter(str_starts(group, "All"))    |> pull(est)
+pct_sum   <- round(100 * top20_sum / all_sum, 1)
+
+cat(glue(
+  "=== Targeting Interpretation — Summary Index ===\n",
+  "  Overall ATE              : {round(all_sum, 4)} (z-score)\n",
+  "  ATE for top 20%          : {round(top20_sum, 4)} (z-score)\n",
+  "  % of avg effect captured : {pct_sum}%\n",
+  "\n",
+  "RATE = {round(rate_sum_est, 4)} (p = {round(rate_sum_pval, 4)})\n",
+  if (rate_sum_pval < 0.05) {
+    "=> Statistically significant targeting gain: heterogeneity in the summary index is actionable.\n"
+  } else if (rate_sum_pval < 0.10) {
+    "=> Marginally significant targeting gain (p < 0.10): moderate evidence of actionable heterogeneity.\n"
+  } else {
+    "=> No significant targeting gain: treatment effects are broadly homogeneous across the summary index.\n"
+  }
+))
+```
+
+---
+
+### Step 4 — Narrative: What Does This Tell Us for HF 2.0?
+
+```{r}
+#| label: summary-narrative
+#| code-fold: false
+
+# Compare BLP p-values: summary index vs screened individual outcomes
+# Pull the best individual-outcome BLP p-value from the screening results
+best_indiv_p <- if (exists("screen_results") && nrow(screen_results) > 0) {
+  min(screen_results$blp_p, na.rm = TRUE)
+} else {
+  NA_real_
+}
+
+cat(glue(
+  "=== Summary Index vs Individual Outcomes ===\n\n",
+  "Factor 1 variance explained: {round(prop_var * 100, 1)}%\n",
+  "ATE on summary index        : {round(ate_sum_val, 4)} (95% CI: ",
+  "[{round(ate_sum_val - 1.96 * ate_summary[['std.err']], 4)}, ",
+  "{round(ate_sum_val + 1.96 * ate_summary[['std.err']], 4)}])\n",
+  "BLP p-value (summary index) : {round(blp_sum_pval, 4)}\n",
+  "RATE (summary index)        : {round(rate_sum_est, 4)} (p = {round(rate_sum_pval, 4)})\n"
+))
+
+if (!is.na(best_indiv_p)) {
+  cat(glue(
+    "\nBest individual outcome BLP p: {round(best_indiv_p, 4)}\n",
+    if (blp_sum_pval < best_indiv_p) {
+      "=> Summary index shows STRONGER heterogeneity signal than any individual outcome.\n"
+    } else {
+      "=> Individual outcomes showed comparable or stronger heterogeneity signal.\n"
+    }
+  ))
+}
+
+cat(glue(
+  "\n=== Implications for HF 2.0 ===\n\n",
+  if (blp_sum_pval < 0.10 || rate_sum_pval < 0.10) {
+    paste0(
+      "The summary index reveals statistically meaningful variation in who benefits from\n",
+      "Healthy Future overall. Families with certain baseline profiles — particularly those\n",
+      "flagged by the top variable importance predictors — respond more strongly across\n",
+      "ALL domains simultaneously. This multi-domain signal is more actionable for\n",
+      "precision targeting than any single outcome: HF 2.0 could use baseline assessments\n",
+      "to prioritize the most intensive support for these high-potential families.\n\n",
+      "The TOC curve and Top-K analysis quantify this gain: treating the top 20% of\n",
+      "predicted high-responders yields approximately {round(pct_sum, 1)}% of the average\n",
+      "benefit while reaching only 20% of the population — a compelling efficiency argument\n",
+      "for adaptive or tiered program delivery.\n"
+    )
+  } else {
+    paste0(
+      "The summary index shows limited evidence of statistically significant heterogeneity\n",
+      "(BLP p = {round(blp_sum_pval, 4)}, RATE p = {round(rate_sum_pval, 4)}). This\n",
+      "suggests that HF's impact is broadly consistent across family types even when\n",
+      "aggregated across all domains. For HF 2.0, this supports a universal delivery\n",
+      "approach rather than selective targeting — the program benefits all families\n",
+      "similarly, which itself is a strong equity finding.\n\n",
+      "However, individual domains may still exhibit pockets of heterogeneity worth\n",
+      "investigating for domain-specific targeting (e.g., nutrition vs. mental health\n",
+      "pathways), as the factor analysis captures only shared variance.\n"
+    )
+  }
+))
+```
+
+::: {.callout-note}
+**Summary Index — Key Takeaways**
+
+The factor analysis summarizes the 7 domain indices into a single weighted composite (Factor 1) capturing their shared variance. This summary index allows a single, unified test of whether HF 2.0 can benefit from precision targeting across all outcomes simultaneously.
+
+- **Factor loadings** indicate which domains are most strongly tied to the shared program impact signal.
+- **The BLP test** on the summary index provides a more statistically powered test of heterogeneity than any individual outcome, because measurement noise partly cancels.
+- **The RATE and TOC curve** quantify how much efficiency could be gained by ranking and targeting families based on their predicted overall benefit from HF.
+
+`r if(blp_sum_pval < 0.10) { glue("**Actionable finding:** The summary index BLP p = {round(blp_sum_pval, 4)} confirms that heterogeneity is present and structured — the causal forest's CATE predictions are validated. HF 2.0 should invest in baseline profiling to identify high-benefit families.") } else { glue("**Null finding is informative:** The summary index BLP p = {round(blp_sum_pval, 4)} suggests broadly consistent effects. HF 2.0's strongest case is universal scale-up, not selective targeting.") }`
+:::
+
