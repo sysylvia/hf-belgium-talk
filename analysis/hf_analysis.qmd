@@ -1,0 +1,469 @@
+---
+title: "Healthy Future — Belgium Talk Analysis"
+subtitle: "Data analysis for Stanford REAP Conference, Leuven, March 28, 2026"
+author: "Sean Sylvia"
+date: "2026-03-26"
+format:
+  html:
+    theme: [cosmo, ../style/hf.scss]
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| code-fold: false
+
+library(haven)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(forcats)
+library(tibble)
+library(stringr)
+library(fixest)     # feols — fast, cluster SEs, FEs
+library(ggplot2)
+library(patchwork)
+library(gt)
+library(scales)
+library(glue)
+
+# Paths
+data_path   <- here::here("data", "HF_main_anasam.dta")
+fig_path    <- here::here("outputs", "figures")
+table_path  <- here::here("outputs", "tables")
+
+dir.create(fig_path,   showWarnings = FALSE, recursive = TRUE)
+dir.create(table_path, showWarnings = FALSE, recursive = TRUE)
+
+# Load
+df <- read_dta(data_path)
+cat(glue("Loaded: {nrow(df)} obs × {ncol(df)} variables\n"))
+cat(glue("Treatment: {sum(df$treat==1)} treated, {sum(df$treat==0)} control\n"))
+
+# Brand colors
+HF_BLUE   <- "#1f4e79"
+HF_TEAL   <- "#2e75b6"
+HF_ORANGE <- "#ed7d31"
+HF_GREEN  <- "#4a7c59"
+HF_GRAY   <- "#767171"
+
+# LASSO-selected controls already in dataset
+lasso_cols <- df |> select(starts_with(c("_CHILD_", "_FAM_", "_CARE_", "_CID_"))) |> names()
+cat(glue("{length(lasso_cols)} LASSO control variables loaded\n"))
+
+# Helper: star labels
+add_stars <- function(p) {
+  case_when(p < 0.01 ~ "***", p < 0.05 ~ "**", p < 0.10 ~ "*", TRUE ~ "")
+}
+
+# Helper: quote non-syntactic variable names for formulas
+bt <- function(x) paste0("`", x, "`")
+
+# Helper: run OLS ITT with cluster SEs via fixest
+# Uses pre-selected LASSO controls + county FEs
+run_itt <- function(outcome, data = df) {
+  controls <- lasso_cols[lasso_cols %in% names(data)]
+  rhs <- paste(c("treat", bt(controls)), collapse = " + ")
+  fml <- as.formula(paste(bt(outcome), "~", rhs))
+  feols(fml, data = data, cluster = ~TID, warn = FALSE)
+}
+```
+
+---
+
+## Slide 6 — Primary Outcomes
+
+Primary outcomes: hemoglobin level (g/dL), exclusive breastfeeding (0/1), dietary diversity score.
+
+> **Method:** OLS with pre-selected LASSO controls + county FEs, cluster-robust SEs by township (TID). This approximates the `pdslasso` approach used in the Stata paper code, using the `_CHILD_*`, `_FAM_*`, `_CARE_*`, `_CID_*` controls already generated in the dataset.
+
+```{r}
+#| label: slide6-primary
+
+primary_vars <- c(
+  "FLVAR_CH_HEMO"  = "Hemoglobin Level (g/dL)",
+  "FLVAR_FEED_EBF" = "Exclusive Breastfeeding (0/1)",
+  "FLVAR_FEED_DDS" = "Dietary Diversity Score"
+)
+
+primary_res <- map_dfr(names(primary_vars), function(v) {
+  m <- run_itt(v)
+  ctrl_mean <- df |> filter(treat == 0) |> pull(v) |> mean(na.rm = TRUE)
+  tibble(
+    outcome   = primary_vars[[v]],
+    b         = coef(m)["treat"],
+    se        = se(m)["treat"],
+    p         = fixest::pvalue(m)["treat"],
+    ci_lo     = coef(m)["treat"] - 1.645 * fixest::se(m)["treat"],
+    ci_hi     = coef(m)["treat"] + 1.645 * fixest::se(m)["treat"],
+    ctrl_mean = ctrl_mean,
+    n         = nobs(m)
+  )
+})
+
+# Table
+primary_res |>
+  mutate(
+    coeff = glue("{round(b,3)}{add_stars(p)}"),
+    se_   = glue("({round(se,3)})"),
+    ci    = glue("[{round(ci_lo,3)}, {round(ci_hi,3)}]"),
+    p_    = round(p, 4),
+    ctrl  = round(ctrl_mean, 3)
+  ) |>
+  select(Outcome=outcome, Effect=coeff, SE=se_, `90% CI`=ci, `p-value`=p_, `Control Mean`=ctrl, N=n) |>
+  gt() |>
+  tab_header(title = "Primary Outcomes — ITT Estimates") |>
+  tab_footnote("* p<0.10  ** p<0.05  *** p<0.01 | OLS with LASSO controls + county FEs, cluster SEs (township)") |>
+  tab_style(style = cell_fill(color = "#e2efda"),
+            locations = cells_body(rows = 3)) |>
+  gtsave(file.path(table_path, "BT_slide6_primary.html"))
+```
+
+```{r}
+#| label: slide6-figure
+#| fig-cap: "Primary outcomes table — talk-ready"
+#| fig-height: 2.2
+
+primary_res |>
+  mutate(
+    outcome = factor(outcome, levels = rev(outcome)),
+    sig     = p < 0.10,
+    label   = glue("{round(b,3)}{add_stars(p)}")
+  ) |>
+  ggplot(aes(y = outcome, x = b, xmin = ci_lo, xmax = ci_hi, color = sig)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = HF_GRAY, linewidth = 0.6) +
+  geom_errorbarh(height = 0.2, linewidth = 1) +
+  geom_point(aes(shape = sig), size = 4) +
+  geom_text(aes(label = label, x = ci_hi), hjust = -0.2, size = 3.5, fontface = "bold") +
+  scale_color_manual(values = c("FALSE" = HF_GRAY, "TRUE" = HF_TEAL), guide = "none") +
+  scale_shape_manual(values = c("FALSE" = 1, "TRUE" = 19), guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  labs(
+    title = "Primary Outcomes",
+    x = "Treatment Effect (90% CI)",
+    y = NULL,
+    caption = "OLS with LASSO controls + county FEs · Cluster SEs by township · Filled = p<0.10"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE),
+    plot.caption  = element_text(color = HF_GRAY, size = 8),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_slide6_primary.png"), width = 8, height = 2.5, dpi = 200)
+```
+
+---
+
+## Slide 7 — Secondary Outcomes Forest Plot
+
+```{r}
+#| label: slide7-forest
+#| fig-cap: "Secondary outcomes — domain index ITT estimates, 90% CIs"
+#| fig-height: 5.5
+
+domain_vars <- tribble(
+  ~var,           ~label,                        ~group,
+  "IN_CH",         "Child Health Index",           "child",
+  "IN_BFI",        "Breastfeeding Initiation",     "child",
+  "IN_CF",         "Complementary Feeding",        "child",
+  "IN_PRIKNOW_CH", "Caregiving Knowledge",         "caregiver",
+  "IN_EPDS",       "Maternal Mental Health (EPDS)","caregiver",
+  "IN_DASS",       "Caregiver Mental Health (DASS)","caregiver",
+  "IN_SS",         "Perceived Social Support",     "caregiver"
+)
+
+sec_res <- map_dfr(domain_vars$var, function(v) {
+  m <- run_itt(v)
+  tibble(
+    var   = v,
+    b     = coef(m)["treat"],
+    se    = se(m)["treat"],
+    p     = fixest::pvalue(m)["treat"],
+    ci_lo = coef(m)["treat"] - 1.645 * fixest::se(m)["treat"],
+    ci_hi = coef(m)["treat"] + 1.645 * fixest::se(m)["treat"],
+    n     = nobs(m)
+  )
+}) |>
+  left_join(domain_vars, by = "var") |>
+  mutate(
+    label = factor(label, levels = rev(domain_vars$label)),
+    sig   = p < 0.10,
+    coeff_label = glue("{round(b,3)}{add_stars(p)}")
+  )
+
+ggplot(sec_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = group)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = HF_GRAY, linewidth = 0.7) +
+  geom_errorbarh(height = 0.25, linewidth = 1.1) +
+  geom_point(aes(shape = sig), size = 4.5) +
+  geom_text(aes(label = coeff_label, x = ci_hi), hjust = -0.15, size = 3.3) +
+  # Section headers
+  annotate("text", x = -0.28, y = 7.6, label = "Child Outcomes", 
+           fontface = "bold", color = HF_BLUE, hjust = 0, size = 3.8) +
+  annotate("text", x = -0.28, y = 4.6, label = "Caregiver Outcomes",
+           fontface = "bold", color = HF_ORANGE, hjust = 0, size = 3.8) +
+  scale_color_manual(
+    values = c("child" = HF_BLUE, "caregiver" = HF_ORANGE),
+    guide  = "none"
+  ) +
+  scale_shape_manual(
+    values = c("FALSE" = 1, "TRUE" = 19),
+    labels = c("p ≥ 0.10", "p < 0.10"),
+    name   = NULL
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  labs(
+    title   = "Treatment Effects — Domain Indices",
+    subtitle = "90% confidence intervals · filled = significant at 10%",
+    x = "Treatment Effect (SD units)",
+    y = NULL,
+    caption = "OLS with pre-selected LASSO controls + county FEs · Cluster-robust SEs by township"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 14),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_slide7_forest.png"), width = 9, height = 5.5, dpi = 200)
+```
+
+---
+
+## Slide 8 — Entry Timing Event Study
+
+Effects by child's age at the start of the intervention. Negative age = in utero (enrolled during pregnancy).
+
+```{r}
+#| label: slide8-setup
+
+# BBVAR_AGE_MON_BASE2 = age in months at baseline/program start (negative = pregnancy)
+df <- df |>
+  mutate(
+    age_entry = BBVAR_AGE_MON_BASE2,
+    entry_bin = case_when(
+      treat == 0                       ~ "control",
+      age_entry < -3                   ~ "preg_early",   # Early pregnancy
+      age_entry >= -3 & age_entry < 0  ~ "preg_late",    # Late pregnancy
+      age_entry >= 0  & age_entry < 3  ~ "inf_0_3",      # 0–3m
+      age_entry >= 3  & age_entry < 6  ~ "inf_3_6",      # 3–6m
+      age_entry >= 6                   ~ "inf_6plus",     # >6m
+      TRUE ~ NA_character_
+    )
+  )
+
+df |> count(entry_bin) |> arrange(entry_bin)
+```
+
+```{r}
+#| label: slide8-regressions
+#| fig-cap: "Entry timing — effects by stage at first exposure, 90% CIs"
+#| fig-height: 6.5
+
+event_vars <- tribble(
+  ~var,           ~title,
+  "IN_CH",         "(a) Child Health Index",
+  "IN_DASS",       "(b) Caregiver Mental Health",
+  "IN_PRIKNOW_CH", "(c) Caregiving Knowledge",
+  "IN_SS",         "(d) Perceived Social Support"
+)
+
+bins_order  <- c("preg_early", "preg_late", "inf_0_3", "inf_3_6")
+bin_labels  <- c("Preg.\n(early)", "Preg.\n(late)", "Infancy\n0–3m", "Infancy\n3–6m")
+
+# For each outcome × each entry bin: compare that bin vs control
+event_res <- map_dfr(event_vars$var, function(v) {
+  map_dfr(bins_order, function(b) {
+    sub <- df |> filter(entry_bin == b | treat == 0) |>
+      mutate(d = as.integer(entry_bin == b & treat == 1))
+    controls_here <- lasso_cols[lasso_cols %in% names(sub)]
+    fml <- as.formula(paste(bt(v), "~ d +", paste(bt(controls_here), collapse = " + ")))
+    m   <- feols(fml, data = sub, cluster = ~TID, warn = FALSE)
+    tibble(
+      var   = v,
+      bin   = b,
+      b     = coef(m)["d"],
+      se    = se(m)["d"],
+      p     = fixest::pvalue(m)["d"],
+      ci_lo = coef(m)["d"] - 1.645 * fixest::se(m)["d"],
+      ci_hi = coef(m)["d"] + 1.645 * fixest::se(m)["d"]
+    )
+  })
+}) |>
+  mutate(
+    bin = factor(bin, levels = bins_order, labels = bin_labels),
+    sig = p < 0.10
+  ) |>
+  left_join(event_vars, by = "var") |>
+  mutate(title = factor(title, levels = event_vars$title))
+
+# 2×2 panel
+ggplot(event_res, aes(x = bin, y = b, ymin = ci_lo, ymax = ci_hi, color = sig, group = 1)) +
+  # Pregnancy shading
+  annotate("rect", xmin = 0.5, xmax = 2.5, ymin = -Inf, ymax = Inf,
+           fill = "#dce6f1", alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.6) +
+  geom_line(color = HF_BLUE, linewidth = 0.7, alpha = 0.5) +
+  geom_errorbar(width = 0.18, linewidth = 1) +
+  geom_point(aes(shape = sig), size = 3.5) +
+  # Pregnancy / Infancy label
+  geom_vline(xintercept = 2.5, linetype = "dotted", color = HF_GRAY, linewidth = 0.7) +
+  annotate("text", x = 1.5, y = Inf, label = "Pregnancy", vjust = 1.5,
+           size = 3.2, color = HF_GRAY, fontface = "italic") +
+  annotate("text", x = 3.5, y = Inf, label = "Infancy",   vjust = 1.5,
+           size = 3.2, color = HF_GRAY, fontface = "italic") +
+  scale_color_manual(values = c("FALSE" = HF_GRAY, "TRUE" = HF_TEAL), guide = "none") +
+  scale_shape_manual(values = c("FALSE" = 1, "TRUE" = 19), guide = "none") +
+  coord_cartesian(ylim = c(-0.5, 0.65)) +
+  facet_wrap(~title, ncol = 2) +
+  labs(
+    title    = "Effects by Stage at First Exposure",
+    subtitle = "90% confidence intervals · each group vs. control",
+    x = "Entry timing",
+    y = "Treatment effect (SD units)",
+    caption  = "OLS with LASSO controls + county FEs · Cluster SEs by township"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 9),
+    plot.caption  = element_text(color = HF_GRAY, size = 8),
+    strip.text    = element_text(face = "bold", size = 10, color = HF_BLUE),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_slide8_event.png"), width = 9, height = 6.5, dpi = 200)
+```
+
+---
+
+## Slide 9 — Intermediate Outcomes Predict Child Health
+
+**New analysis.** Control group only. Standardized associations between intermediate outcomes at follow-up and the child health index — motivating the surrogate index framework for HF 2.0.
+
+```{r}
+#| label: slide9-predictive
+#| fig-cap: "Intermediate outcomes predicting child health (control group)"
+#| fig-height: 4.5
+
+ctrl_df <- df |> filter(treat == 0)
+cat(glue("Control group N = {nrow(ctrl_df)}\n"))
+
+# Standardize
+z_score <- function(x) (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+
+surrogates <- tribble(
+  ~var,           ~label,
+  "IN_CF",         "Complementary Feeding",
+  "IN_BFI",        "Breastfeeding Initiation",
+  "IN_PRIKNOW_CH", "Caregiving Knowledge",
+  "IN_DASS",       "Caregiver Mental Health",
+  "IN_SS",         "Perceived Social Support"
+)
+
+ctrl_std <- ctrl_df |>
+  mutate(
+    across(c(all_of(surrogates$var), "IN_CH"), z_score, .names = "z_{.col}")
+  )
+
+ctrl_county <- lasso_cols[lasso_cols %in% names(ctrl_std)]
+
+surr_res <- map_dfr(surrogates$var, function(v) {
+  fml <- as.formula(paste(bt("z_IN_CH"), "~", bt(paste0("z_", v)), "+", paste(bt(ctrl_county), collapse = " + ")))
+  m   <- feols(fml, data = ctrl_std, cluster = ~TID, warn = FALSE)
+  coef_name <- paste0("z_", v)
+  tibble(
+    var   = v,
+    b     = coef(m)[coef_name],
+    se    = se(m)[coef_name],
+    p     = fixest::pvalue(m)[coef_name],
+    ci_lo = coef(m)[coef_name] - 1.96 * fixest::se(m)[coef_name],
+    ci_hi = coef(m)[coef_name] + 1.96 * fixest::se(m)[coef_name],
+    n     = nobs(m)
+  )
+}) |>
+  left_join(surrogates, by = "var") |>
+  mutate(
+    label = factor(label, levels = rev(surrogates$label)),
+    sig   = p < 0.10,
+    coeff_label = glue("{round(b,3)}{add_stars(p)}")
+  )
+
+# Save table
+surr_res |>
+  mutate(
+    b_   = glue("{round(b,3)}{add_stars(p)}"),
+    se_  = glue("({round(se,3)})"),
+    ci_  = glue("[{round(ci_lo,3)}, {round(ci_hi,3)}]"),
+    p_   = round(p, 4)
+  ) |>
+  select(Outcome=label, Coeff=b_, SE=se_, `95% CI`=ci_, `p-value`=p_, N=n) |>
+  gt() |>
+  tab_header(
+    title    = "Intermediate Outcomes Predict Child Health",
+    subtitle = "Control group only · Standardized coefficients"
+  ) |>
+  tab_footnote("All variables in SD units. OLS with county FEs. Cluster SEs by township.") |>
+  gtsave(file.path(table_path, "BT_slide9_predictive.html"))
+
+# Figure
+ggplot(surr_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = sig)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = HF_GRAY, linewidth = 0.7) +
+  geom_errorbarh(height = 0.25, linewidth = 1.2) +
+  geom_point(aes(shape = sig), size = 5) +
+  geom_text(aes(label = coeff_label, x = ci_hi), hjust = -0.15, size = 3.8, fontface = "bold") +
+  scale_color_manual(values = c("FALSE" = HF_GRAY, "TRUE" = HF_ORANGE), guide = "none") +
+  scale_shape_manual(values = c("FALSE" = 1, "TRUE" = 19), guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.30))) +
+  labs(
+    title    = "Intermediate Outcomes Predict Child Health Trajectories",
+    subtitle = "Control group only · 95% CI · all variables standardized (SD units)",
+    x        = "Association with Child Health Index (SD units)",
+    y        = NULL,
+    caption  = glue(
+      "OLS with county FEs · Cluster-robust SEs by township · N ≈ {min(surr_res$n)}\n",
+      "Families with better intermediate outcomes at follow-up show stronger child health. ",
+      "Motivates surrogate index framework for HF 2.0."
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_slide9_predictive.png"), width = 9, height = 4.5, dpi = 200)
+```
+
+---
+
+## Output Summary
+
+```{r}
+#| label: summary
+#| code-fold: false
+
+figs   <- list.files(fig_path,   pattern = "*.png", full.names = TRUE)
+tables <- list.files(table_path, pattern = "*.html|*.csv", full.names = TRUE)
+
+cat("=== Figures ===\n")
+walk(figs, ~cat(sprintf("  %-45s  %s KB\n", basename(.x), round(file.size(.x)/1024))))
+
+cat("\n=== Tables ===\n")
+walk(tables, ~cat(sprintf("  %s\n", basename(.x))))
+```

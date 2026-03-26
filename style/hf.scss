@@ -1,0 +1,229 @@
+/*-- scss:defaults --*/
+
+/*-- HF Belgium Talk Theme — Style 2 (Visual-First, Policy Audience) --*/
+
+/* Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@300;400;600;700&family=Source+Code+Pro&display=swap');
+
+$font-family-sans-serif: "Source Sans Pro", sans-serif !default;
+$font-family-monospace: "Source Code Pro", monospace !default;
+
+/* Brand colors */
+$hf-blue:     #1f4e79;
+$hf-teal:     #2e75b6;
+$hf-orange:   #ed7d31;
+$hf-green:    #4a7c59;
+$hf-gray:     #595959;
+$hf-lightbg:  #f7f9fc;
+
+/*-- Reveal.js slide overrides — Style 2: bigger, more breathing room --*/
+.reveal {
+  font-family: $font-family-sans-serif;
+  color: #2c2c2c;
+  font-size: 24px;
+}
+
+.reveal h1, .reveal h2, .reveal h3 {
+  font-family: $font-family-sans-serif;
+  color: $hf-blue;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.reveal h1 { font-size: 1.8em; }
+.reveal h2 { font-size: 1.3em; border-bottom: 3px solid $hf-teal; padding-bottom: 0.2em; margin-bottom: 0.6em; }
+.reveal h3 { font-size: 1.05em; color: $hf-gray; font-weight: 600; }
+
+.reveal p { line-height: 1.6; }
+.reveal li { margin-bottom: 0.35em; line-height: 1.5; }
+
+.reveal .slide-number {
+  font-size: 0.65em;
+  color: $hf-gray;
+}
+
+.reveal footer {
+  font-size: 0.55em;
+  color: $hf-gray;
+}
+
+/* Key finding callout — larger, more prominent */
+.key-finding {
+  background: #e8f4f8;
+  border-left: 5px solid $hf-teal;
+  padding: 0.8em 1.2em;
+  margin: 0.6em 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 1.0em;
+  line-height: 1.5;
+}
+
+/* Policy callout — larger, more prominent */
+.policy {
+  background: #fff3e0;
+  border-left: 5px solid $hf-orange;
+  padding: 0.8em 1.2em;
+  margin: 0.6em 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 1.0em;
+  line-height: 1.5;
+}
+
+/* Big number stat callout */
+.big-number {
+  font-size: 2.8em;
+  font-weight: 700;
+  color: $hf-teal;
+  display: block;
+  line-height: 1.1;
+  margin-bottom: 0.1em;
+}
+
+.big-number-label {
+  font-size: 0.9em;
+  color: $hf-gray;
+  font-weight: 400;
+  display: block;
+  line-height: 1.3;
+}
+
+/* Visual box — icon + short text pattern */
+.visual-box {
+  background: $hf-lightbg;
+  border: 1px solid #dde5f0;
+  border-radius: 8px;
+  padding: 1em 1.2em;
+  margin: 0.4em 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8em;
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+.visual-box .icon {
+  font-size: 1.8em;
+  flex-shrink: 0;
+  margin-top: 0.05em;
+}
+
+/* Outcome result boxes */
+.outcome-box {
+  border-radius: 8px;
+  padding: 1.2em;
+  text-align: center;
+  font-weight: 600;
+}
+
+.outcome-null {
+  background: #f2f2f2;
+  border: 2px solid #bbb;
+  color: $hf-gray;
+}
+
+.outcome-positive {
+  background: #e6f3ec;
+  border: 2px solid $hf-green;
+  color: $hf-green;
+}
+
+.outcome-label {
+  font-size: 1.0em;
+  font-weight: 600;
+  margin-bottom: 0.4em;
+  color: #333;
+}
+
+.outcome-effect {
+  font-size: 1.6em;
+  font-weight: 700;
+  margin-bottom: 0.2em;
+}
+
+.outcome-sub {
+  font-size: 0.75em;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+/* Flow diagram */
+.flow-box {
+  background: $hf-lightbg;
+  border: 2px solid $hf-teal;
+  border-radius: 8px;
+  padding: 0.7em 1em;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.flow-arrow {
+  font-size: 1.4em;
+  color: $hf-teal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Phase table */
+.phase-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.phase-table th {
+  background: $hf-blue;
+  color: white;
+  padding: 0.5em 0.8em;
+  font-weight: 600;
+  text-align: left;
+}
+
+.phase-table td {
+  padding: 0.45em 0.8em;
+  border-bottom: 1px solid #dde5f0;
+}
+
+.phase-table tr:nth-child(even) td {
+  background: $hf-lightbg;
+}
+
+/* Center helper */
+.center { text-align: center; }
+
+/* Takeaway number */
+.takeaway-num {
+  font-size: 3em;
+  font-weight: 700;
+  color: $hf-teal;
+  line-height: 1;
+  margin-bottom: 0.1em;
+}
+
+.takeaway-title {
+  font-size: 1.1em;
+  font-weight: 700;
+  color: $hf-blue;
+  margin-bottom: 0.3em;
+}
+
+.takeaway-text {
+  font-size: 0.88em;
+  color: #444;
+  line-height: 1.5;
+}
+
+/*-- HTML report overrides --*/
+body {
+  font-family: $font-family-sans-serif;
+  font-size: 15px;
+  color: #2c2c2c;
+}
+
+h1, h2, h3, h4 {
+  color: $hf-blue;
+  font-weight: 600;
+}
+
+.callout-note { border-left-color: $hf-teal; }
+.callout-important { border-left-color: $hf-orange; }

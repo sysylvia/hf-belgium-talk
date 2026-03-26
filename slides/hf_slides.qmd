@@ -1,0 +1,812 @@
+---
+title: "AI-Enhanced Curriculum Delivery for Community Health Workers"
+subtitle: "Evidence and Design from the Healthy Future Platform"
+author: "Sean Sylvia · Gary Darmstadt · Yunwei Chen · Ann Weber · Siva Balakrishnan"
+date: "March 28, 2026"
+date-format: long
+format:
+  revealjs:
+    theme: [default, ../style/hf.scss]
+    slide-number: true
+    transition: fade
+    progress: true
+    incremental: false
+    center: false
+    scrollable: false
+    smaller: false
+    footer: "Sylvia et al. | Stanford REAP Conference, Leuven 2026"
+    toc: false
+    chalkboard: false
+    preview-links: auto
+    width: 1280
+    height: 720
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(forcats)
+library(tibble)
+library(stringr)
+library(fixest)
+library(ggplot2)
+library(patchwork)
+library(glue)
+
+df <- read_dta(here::here("data", "HF_main_anasam.dta"))
+
+HF_BLUE   <- "#1f4e79"
+HF_TEAL   <- "#2e75b6"
+HF_ORANGE <- "#ed7d31"
+HF_GREEN  <- "#4a7c59"
+HF_GRAY   <- "#767171"
+HF_LIGHTBG <- "#f7f9fc"
+
+lasso_cols <- df |> select(starts_with(c("_CHILD_","_FAM_","_CARE_","_CID_"))) |> names()
+
+add_stars <- function(p) case_when(p<0.01~"***", p<0.05~"**", p<0.10~"*", TRUE~"")
+bt <- function(x) paste0("`", x, "`")
+
+run_itt <- function(outcome, data = df) {
+  controls <- lasso_cols[lasso_cols %in% names(data)]
+  rhs <- paste(c("treat", bt(controls)), collapse = " + ")
+  fml <- as.formula(paste(bt(outcome), "~", rhs))
+  feols(fml, data = data, cluster = ~TID, warn = FALSE)
+}
+```
+
+---
+
+## {.center background-color="#1f4e79"}
+
+::: {style="color: white; text-align: center; padding-top: 60px;"}
+
+<div style="font-size: 1.6em; font-weight: 700; line-height: 1.3; margin-bottom: 0.6em;">
+AI-Enhanced Curriculum Delivery<br>for Community Health Workers
+</div>
+
+<div style="font-size: 1.1em; color: #b8d4f0; margin-bottom: 1.2em;">
+Evidence and Design from the Healthy Future Platform
+</div>
+
+<div style="font-size: 0.85em; color: #cce0f5; margin-bottom: 1.5em;">
+Sean Sylvia (UNC Chapel Hill) &nbsp;·&nbsp; Gary Darmstadt & Yunwei Chen (Stanford)<br>
+Ann Weber & Siva Balakrishnan (University of Nevada, Reno)
+</div>
+
+<div style="font-size: 0.8em; color: #9ec5e8; border-top: 1px solid #3a7ab8; padding-top: 0.8em;">
+Stanford REAP Conference &nbsp;·&nbsp; Irish College Leuven &nbsp;·&nbsp; March 28, 2026
+</div>
+
+:::
+
+---
+
+## The Problem: One Visit, Many Needs
+
+::: columns
+::: {.column width="50%"}
+
+<div style="font-size: 1.05em; font-weight: 600; color: #1f4e79; margin-bottom: 0.8em;">A CHW has ~30 minutes per home visit</div>
+
+<div class="visual-box"><span class="icon">👶</span><div><strong>Breastfeeding</strong> — initiation, exclusivity, timing</div></div>
+<div class="visual-box"><span class="icon">🥗</span><div><strong>Complementary feeding</strong> — diversity, frequency</div></div>
+<div class="visual-box"><span class="icon">🧠</span><div><strong>Maternal mental health</strong> — depression, anxiety</div></div>
+<div class="visual-box"><span class="icon">🏥</span><div><strong>Health service uptake</strong> — vaccines, checkups</div></div>
+<div class="visual-box"><span class="icon">🤲</span><div><strong>Daily care & stimulation</strong> — responsive caregiving</div></div>
+
+:::
+::: {.column width="50%"}
+
+<div style="text-align: center; padding: 1.5em 1em;">
+<div style="font-size: 5em;">⏱️</div>
+<div style="font-size: 1.8em; font-weight: 700; color: #1f4e79; margin: 0.3em 0;">30 minutes</div>
+<div style="color: #767171; font-size: 0.95em;">per visit · dozens of families · hundreds of content decisions</div>
+</div>
+
+::: {.key-finding}
+**Standard approach:** all families at the same developmental stage get the **same content** — regardless of circumstances.
+:::
+
+:::
+:::
+
+---
+
+## The Healthy Future Program
+
+::: columns
+::: {.column width="50%"}
+
+<div style="font-size: 1.05em; font-weight: 600; color: #1f4e79; margin-bottom: 0.8em;">CareLoom — the app behind the CHW visit</div>
+
+<div class="visual-box"><span class="icon">📱</span><div><strong>App-guided visits</strong> — CHW follows structured curriculum, app handles the decisions</div></div>
+<div class="visual-box"><span class="icon">🗓️</span><div><strong>Stage-based delivery</strong> — new content each 3-month stage, then reinforcement</div></div>
+<div class="visual-box"><span class="icon">📶</span><div><strong>Offline-first</strong> — works in rural, low-connectivity settings</div></div>
+<div class="visual-box"><span class="icon">🔓</span><div><strong>Open-source MIT</strong> — github.com/DHEPLab</div></div>
+
+:::
+::: {.column width="50%"}
+
+<div style="text-align: center; padding: 0.5em 0; margin-bottom: 0.8em;">
+
+```{r hf-flow}
+#| fig-height: 3.8
+#| fig-width: 4.8
+library(ggplot2)
+
+boxes <- tibble(
+  x = c(0.5, 0.5, 0.5, 0.5),
+  y = c(3.5, 2.5, 1.5, 0.5),
+  label = c("Pregnancy", "0–6 months", "6–12 months", "12–18 months"),
+  fill = c("#dce6f1","#dce6f1","#e6f3ec","#e6f3ec")
+)
+
+arrows <- tibble(x=0.5, xend=0.5, y=c(3.2,2.2,1.2), yend=c(2.8,1.8,0.8))
+
+ggplot() +
+  geom_tile(data=boxes, aes(x=x, y=y, fill=fill), width=0.85, height=0.5, color="#2e75b6", linewidth=0.8) +
+  geom_text(data=boxes, aes(x=x, y=y, label=label), fontface="bold", size=4.2, color="#1f4e79") +
+  scale_fill_identity() +
+  geom_segment(data=arrows, aes(x=x, xend=xend, y=y, yend=yend),
+               arrow=arrow(length=unit(0.12,"inches"), type="closed"),
+               color="#2e75b6", linewidth=1) +
+  annotate("text", x=0.5, y=4.15, label="CHW Home Visits", fontface="bold",
+           size=4.5, color="#1f4e79") +
+  annotate("text", x=0.5, y=0.0, label="Stage-based · App-guided · Monthly",
+           size=3.2, color="#767171") +
+  xlim(0, 1) + ylim(-0.3, 4.5) +
+  theme_void()
+```
+
+</div>
+
+::: {.policy}
+The app removes the burden — CHWs don't track where each family is or decide what to teach. The platform does.
+:::
+
+:::
+:::
+
+---
+
+## Study Design
+
+::: columns
+::: {.column width="48%"}
+
+<div style="font-size: 1.05em; font-weight: 600; color: #1f4e79; margin-bottom: 0.8em;">Cluster RCT — Rural China</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6em; margin-bottom: 0.8em;">
+<div style="background:#f7f9fc; border-radius:8px; padding:0.8em; text-align:center;">
+<span class="big-number">119</span>
+<span class="big-number-label">townships randomized<br>(40 treat / 79 control)</span>
+</div>
+<div style="background:#f7f9fc; border-radius:8px; padding:0.8em; text-align:center;">
+<span class="big-number">1,306</span>
+<span class="big-number-label">families enrolled<br>across 4 counties</span>
+</div>
+<div style="background:#f7f9fc; border-radius:8px; padding:0.8em; text-align:center;">
+<span class="big-number">12</span>
+<span class="big-number-label">months of CHW<br>home visits</span>
+</div>
+<div style="background:#f7f9fc; border-radius:8px; padding:0.8em; text-align:center;">
+<span class="big-number">88%</span>
+<span class="big-number-label">follow-up rate<br>(COVID-period)</span>
+</div>
+</div>
+
+<div style="font-size: 0.82em; color: #767171;">
+499 pregnant women enrolled · 807 families with infants &lt;6m<br>
+Post-double-selection LASSO · County FEs · Cluster SEs (township)
+</div>
+
+:::
+::: {.column width="52%"}
+
+```{r baseline-chart}
+#| fig-height: 4.2
+#| fig-width: 5.5
+
+stats <- tibble(
+  label = c("Exclusive BF\nat baseline", "Any mental\nhealth concern", "Maternal\ndepression", "Maternal\nanxiety"),
+  pct   = c(0.32, 0.43, 0.19, 0.21),
+  color = c(HF_TEAL, HF_ORANGE, HF_ORANGE, HF_ORANGE)
+)
+
+ggplot(stats, aes(x = reorder(label, pct), y = pct, fill = color)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = scales::percent(pct, accuracy = 1)),
+            hjust = -0.2, size = 5, fontface = "bold", color = "#2c2c2c") +
+  scale_fill_identity() +
+  scale_y_continuous(limits = c(0, 0.62), labels = scales::percent) +
+  coord_flip() +
+  labs(title = "Baseline Profile", x = NULL, y = NULL) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", color = HF_BLUE, size = 15),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(size = 13))
+```
+
+:::
+:::
+
+---
+
+## Primary Outcomes {.center}
+
+```{r primary-compute}
+primary_vars <- c(
+  "FLVAR_CH_HEMO"  = "Hemoglobin Level",
+  "FLVAR_FEED_EBF" = "Exclusive Breastfeeding",
+  "FLVAR_FEED_DDS" = "Dietary Diversity Score"
+)
+
+primary_res <- map_dfr(names(primary_vars), function(v) {
+  m <- run_itt(v)
+  tibble(
+    outcome  = primary_vars[[v]],
+    b        = coef(m)["treat"],
+    se       = fixest::se(m)["treat"],
+    p        = fixest::pvalue(m)["treat"],
+    ci_lo    = coef(m)["treat"] - 1.645 * fixest::se(m)["treat"],
+    ci_hi    = coef(m)["treat"] + 1.645 * fixest::se(m)["treat"]
+  )
+}) |> mutate(sig = p < 0.10)
+```
+
+<div style="display: flex; gap: 2em; justify-content: center; align-items: stretch; margin-top: 1.5em;">
+
+<div style="flex: 1; max-width: 300px;">
+<div class="outcome-label">Hemoglobin Level</div>
+<div class="outcome-box outcome-null">
+<div class="outcome-effect">No effect</div>
+<div class="outcome-sub">β = `r round(primary_res$b[1],3)` · p = `r round(primary_res$p[1],2)`</div>
+</div>
+<div style="font-size:0.8em; color:#767171; text-align:center; margin-top:0.5em;">Biomarker outcomes need<br>longer time horizons</div>
+</div>
+
+<div style="flex: 1; max-width: 300px;">
+<div class="outcome-label">Exclusive Breastfeeding</div>
+<div class="outcome-box outcome-null">
+<div class="outcome-effect">No effect</div>
+<div class="outcome-sub">β = `r round(primary_res$b[2],3)` · p = `r round(primary_res$p[2],2)`</div>
+</div>
+<div style="font-size:0.8em; color:#767171; text-align:center; margin-top:0.5em;">Baseline rates already<br>relatively high</div>
+</div>
+
+<div style="flex: 1; max-width: 300px;">
+<div class="outcome-label">Dietary Diversity Score</div>
+<div class="outcome-box outcome-positive">
+<div class="outcome-effect">↑ Significant</div>
+<div class="outcome-sub">β = `r round(primary_res$b[3],3)``r add_stars(primary_res$p[3])` · p = `r round(primary_res$p[3],2)`</div>
+</div>
+<div style="font-size:0.8em; color:#767171; text-align:center; margin-top:0.5em;">Proximate pathway —<br>where 12-month programs work first</div>
+</div>
+
+</div>
+
+::: {.policy style="margin-top: 1.5em; font-size: 0.95em;"}
+**Why dietary diversity?** Feeding practice changes are the proximate pathway. Biomarker and growth effects require longer follow-up — this is expected, not a failure.
+:::
+
+---
+
+## Secondary Outcomes: Where We See the Impact
+
+```{r sec-compute}
+domain_vars <- tribble(
+  ~var,            ~label,                          ~group,
+  "IN_CH",          "Child Health Index",             "child",
+  "IN_BFI",         "Breastfeeding Initiation",       "child",
+  "IN_CF",          "Complementary Feeding",           "child",
+  "IN_PRIKNOW_CH",  "Caregiving Knowledge",            "caregiver",
+  "IN_EPDS",        "Maternal Mental Health (EPDS)",   "caregiver",
+  "IN_DASS",        "Caregiver Mental Health (DASS)",  "caregiver",
+  "IN_SS",          "Perceived Social Support",        "caregiver"
+)
+
+sec_res <- map_dfr(domain_vars$var, function(v) {
+  m <- run_itt(v)
+  tibble(var=v, b=coef(m)["treat"], se=fixest::se(m)["treat"],
+         p=fixest::pvalue(m)["treat"],
+         ci_lo=coef(m)["treat"] - 1.645 * fixest::se(m)["treat"],
+         ci_hi=coef(m)["treat"] + 1.645 * fixest::se(m)["treat"])
+}) |> left_join(domain_vars, by="var") |>
+  mutate(label=factor(label, levels=rev(domain_vars$label)),
+         sig=p<0.10,
+         coeff_label=glue("{round(b,3)}{add_stars(p)}"))
+```
+
+```{r sec-grouped-bar}
+#| fig-height: 4.4
+#| fig-width: 11
+
+sec_plot <- sec_res |>
+  mutate(
+    group_label = ifelse(group=="child","Child Outcomes","Caregiver Outcomes"),
+    fill_col = case_when(sig & group=="child" ~ HF_TEAL,
+                          sig & group=="caregiver" ~ HF_ORANGE,
+                          TRUE ~ "#d0d0d0"),
+    label_short = c("Child\nHealth\nIndex","Breastfeeding\nInitiation","Comp.\nFeeding",
+                    "Caregiving\nKnowledge","Maternal MH\n(EPDS)","Caregiver MH\n(DASS)","Social\nSupport")
+  )
+
+ggplot(sec_plot, aes(x=label_short, y=b, fill=fill_col)) +
+  geom_col(width=0.65) +
+  geom_errorbar(aes(ymin=ci_lo, ymax=ci_hi), width=0.2, linewidth=0.9, color="#555") +
+  geom_hline(yintercept=0, linewidth=0.8, color="#333") +
+  geom_text(aes(label=coeff_label,
+                y=ifelse(b>=0, ci_hi+0.03, ci_lo-0.03),
+                vjust=ifelse(b>=0, 0, 1)),
+            size=3.8, fontface="bold", color="#333") +
+  geom_vline(xintercept=3.5, linetype="dashed", color="#aaa", linewidth=0.8) +
+  annotate("text", x=2, y=max(sec_plot$ci_hi, na.rm=TRUE)*1.15,
+           label="Child Outcomes", fontface="bold", color=HF_BLUE, size=4.2) +
+  annotate("text", x=5.5, y=max(sec_plot$ci_hi, na.rm=TRUE)*1.15,
+           label="Caregiver Outcomes", fontface="bold", color=HF_ORANGE, size=4.2) +
+  scale_fill_identity() +
+  scale_y_continuous(expand=expansion(mult=c(0.15,0.2))) +
+  labs(x=NULL, y="Treatment Effect (SD units, 90% CI)",
+       caption="Color = significant (p<0.10) · Grey = not significant · OLS · LASSO controls + county FEs") +
+  theme_minimal(base_size=13) +
+  theme(panel.grid.major.x=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.caption=element_text(color=HF_GRAY, size=9),
+        axis.text.x=element_text(size=11, lineheight=1.1))
+```
+
+---
+
+## When Does It Work Best? Entry Timing
+
+```{r timing-compute}
+df2 <- df |>
+  mutate(
+    age_entry = BBVAR_AGE_MON_BASE2,
+    entry_bin = case_when(
+      treat == 0                        ~ "control",
+      age_entry < -3                    ~ "preg_early",
+      age_entry >= -3 & age_entry < 0   ~ "preg_late",
+      age_entry >= 0  & age_entry < 3   ~ "inf_0_3",
+      age_entry >= 3  & age_entry < 6   ~ "inf_3_6",
+      TRUE ~ NA_character_
+    )
+  )
+
+bins_order  <- c("preg_early","preg_late","inf_0_3","inf_3_6")
+bin_labels  <- c("Pregnancy\n(early)","Pregnancy\n(late)","Infancy\n0–3m","Infancy\n3–6m")
+bin_shading <- c("pregnancy","pregnancy","infancy","infancy")
+
+event_vars <- tribble(
+  ~var,            ~title,
+  "IN_CH",          "(a) Child Health Index",
+  "IN_DASS",        "(b) Caregiver Mental Health",
+  "IN_PRIKNOW_CH",  "(c) Caregiving Knowledge",
+  "IN_SS",          "(d) Social Support"
+)
+
+event_res <- map_dfr(event_vars$var, function(v) {
+  map_dfr(bins_order, function(b) {
+    sub <- df2 |> filter(entry_bin==b | treat==0) |>
+      mutate(d=as.integer(entry_bin==b & treat==1))
+    ctrl_here <- lasso_cols[lasso_cols %in% names(sub)]
+    fml <- as.formula(paste(bt(v),"~ d +",paste(bt(ctrl_here),collapse=" + ")))
+    m   <- feols(fml, data=sub, cluster=~TID, warn=FALSE)
+    tibble(var=v, bin=b, b=coef(m)["d"], se=fixest::se(m)["d"],
+           p=fixest::pvalue(m)["d"],
+           ci_lo=coef(m)["d"] - 1.645 * fixest::se(m)["d"],
+           ci_hi=coef(m)["d"] + 1.645 * fixest::se(m)["d"])
+  })
+}) |>
+  mutate(bin=factor(bin,levels=bins_order,labels=bin_labels),
+         shading=rep(rep(bin_shading,length(event_vars$var)),1),
+         sig=p<0.10) |>
+  left_join(event_vars, by="var") |>
+  mutate(title=factor(title,levels=event_vars$title))
+```
+
+```{r timing-plot}
+#| fig-height: 4.2
+#| fig-width: 11
+
+ggplot(event_res, aes(x=bin, y=b, fill=sig)) +
+  annotate("rect", xmin=0.5, xmax=2.5, ymin=-Inf, ymax=Inf, fill="#dce6f1", alpha=0.4) +
+  annotate("rect", xmin=2.5, xmax=4.5, ymin=-Inf, ymax=Inf, fill="#e6f3ec", alpha=0.3) +
+  geom_hline(yintercept=0, linewidth=0.9, color="#333") +
+  geom_col(aes(fill=sig), width=0.6) +
+  geom_errorbar(aes(ymin=ci_lo, ymax=ci_hi), width=0.18, linewidth=0.9, color="#444") +
+  geom_vline(xintercept=2.5, linetype="dashed", color="#999", linewidth=0.7) +
+  scale_fill_manual(values=c("FALSE"="#cccccc","TRUE"=HF_TEAL), guide="none") +
+  facet_wrap(~title, ncol=4) +
+  labs(x="Stage at first exposure", y="Effect size (SD, 90% CI)",
+       caption="Blue shading = pregnancy entry · Green shading = infancy entry · Filled = p<0.10") +
+  theme_minimal(base_size=13) +
+  theme(strip.text=element_text(face="bold", size=12, color=HF_BLUE),
+        panel.grid.major.x=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.caption=element_text(color=HF_GRAY, size=9),
+        axis.text.x=element_text(size=10, lineheight=1.1))
+```
+
+::: {.policy style="font-size: 0.95em;"}
+**Key finding:** Pregnancy enrollment consistently delivers the strongest gains. Programs that start CHW engagement only post-partum are missing the highest-return window.
+:::
+
+---
+
+## Short-Term Signals Predict Long-Run Health
+
+```{r surr-compute}
+ctrl_df <- df |> filter(treat==0)
+z_score <- function(x) (x-mean(x,na.rm=TRUE))/sd(x,na.rm=TRUE)
+
+surrogates <- tribble(
+  ~var,            ~label,
+  "IN_CF",          "Complementary Feeding",
+  "IN_BFI",         "Breastfeeding Initiation",
+  "IN_PRIKNOW_CH",  "Caregiving Knowledge",
+  "IN_DASS",        "Caregiver Mental Health",
+  "IN_SS",          "Perceived Social Support"
+)
+
+ctrl_std <- ctrl_df |>
+  mutate(across(c(all_of(surrogates$var),"IN_CH"), z_score, .names="z_{.col}"))
+
+ctrl_county <- lasso_cols[lasso_cols %in% names(ctrl_std)]
+
+surr_res <- map_dfr(surrogates$var, function(v) {
+  fml <- as.formula(paste(bt("z_IN_CH"), "~", bt(paste0("z_", v)), "+", paste(bt(ctrl_county), collapse = " + ")))
+  m   <- feols(fml, data=ctrl_std, cluster=~TID, warn=FALSE)
+  cn  <- paste0("z_",v)
+  tibble(var=v, b=coef(m)[cn], se=fixest::se(m)[cn], p=fixest::pvalue(m)[cn],
+         ci_lo=coef(m)[cn] - 1.96 * fixest::se(m)[cn],
+         ci_hi=coef(m)[cn] + 1.96 * fixest::se(m)[cn], n=nobs(m))
+}) |> left_join(surrogates, by="var") |>
+  mutate(label=factor(label,levels=rev(surrogates$label)), sig=p<0.10,
+         coeff_label=glue("{round(b,3)}{add_stars(p)}"))
+```
+
+::: columns
+::: {.column width="55%"}
+
+```{r surr-plot}
+#| fig-height: 3.8
+#| fig-width: 6.5
+
+ggplot(surr_res, aes(y=label, x=b, xmin=ci_lo, xmax=ci_hi, color=sig)) +
+  geom_vline(xintercept=0, linetype="dashed", color=HF_GRAY, linewidth=0.7) +
+  geom_errorbarh(height=0.25, linewidth=1.3) +
+  geom_point(aes(shape=sig), size=5.5) +
+  geom_text(aes(label=coeff_label, x=ci_hi), hjust=-0.15, size=4.2, fontface="bold") +
+  scale_color_manual(values=c("FALSE"=HF_GRAY,"TRUE"=HF_ORANGE), guide="none") +
+  scale_shape_manual(values=c("FALSE"=1,"TRUE"=19), guide="none") +
+  scale_x_continuous(expand=expansion(mult=c(0.05,0.35))) +
+  labs(x="Association with Child Health Index (SD units)", y=NULL,
+       subtitle="Control group only · 95% CI",
+       caption="Standardized OLS · County FEs · Cluster SEs by township") +
+  theme_minimal(base_size=14) +
+  theme(panel.grid.minor=element_blank(),
+        plot.subtitle=element_text(color=HF_GRAY, size=12),
+        plot.caption=element_text(color=HF_GRAY, size=9),
+        axis.text=element_text(size=12))
+```
+
+:::
+::: {.column width="45%"}
+
+<div style="font-size: 0.95em; margin-bottom: 0.8em; color: #1f4e79; font-weight: 600;">What this shows</div>
+
+In the **control group**, families with better follow-up values on these intermediate outcomes are on stronger long-run child health trajectories.
+
+**Implication:** short-term gains are **leading indicators** — not just outputs.
+
+::: {.key-finding style="margin-top: 0.8em;"}
+**For HF 2.0:** Tracking these signals in real time creates a feedback loop for content adaptation — without waiting 12–24 months for child health outcomes.
+
+Foundation for the **surrogate index framework** (Athey et al. 2019).
+:::
+
+:::
+:::
+
+---
+
+## HF 1.0 → HF 2.0: The Evolution
+
+::: columns
+::: {.column width="50%"}
+
+```{r evolution-diagram}
+#| fig-height: 4.5
+#| fig-width: 5.5
+
+boxes <- tibble(
+  x    = c(0.5, 0.5, 0.5, 0.5),
+  y    = c(3.5, 2.5, 1.5, 0.5),
+  fill = c("#dce6f1","#dce6f1","#e6f3ec","#e6f3ec"),
+  border= c("#2e75b6","#2e75b6","#4a7c59","#4a7c59"),
+  lbl  = c("HF 1.0 — Stage-based","","HF 2.0 — Circumstances-based","")
+)
+
+hf1 <- tibble(
+  x    = c(0.25, 0.75),
+  y    = c(3.5, 3.5),
+  label= c("Stage X", "Same content\nfor all families"),
+  fill = c("#dce6f1","#dce6f1")
+)
+
+hf2_inputs <- tibble(
+  x    = c(0.18, 0.5, 0.82),
+  y    = c(1.8, 1.8, 1.8),
+  label= c("Family\ncharacteristics","Response\nsignals","CHW\njudgment"),
+  fill = c("#e6f3ec","#e6f3ec","#e6f3ec")
+)
+
+hf2_output <- tibble(x=0.5, y=0.7, label="Tailored content\npriority", fill="#4a7c59")
+
+ggplot() +
+  # HF 1.0 section
+  annotate("rect", xmin=0, xmax=1, ymin=3.1, ymax=3.9, fill="#dce6f1", alpha=0.5, color="#2e75b6", linewidth=0.8) +
+  annotate("text", x=0.08, y=3.85, label="HF 1.0", fontface="bold", color="#1f4e79", size=4, hjust=0) +
+  geom_tile(data=hf1, aes(x=x, y=y, fill=fill), width=0.42, height=0.45, color="#2e75b6", linewidth=0.7) +
+  geom_text(data=hf1, aes(x=x, y=y, label=label), size=3.5, color="#1f4e79", fontface="bold", lineheight=1.1) +
+  annotate("segment", x=0.46, xend=0.54, y=3.5, yend=3.5,
+           arrow=arrow(length=unit(0.1,"in"),type="closed"), color="#2e75b6", linewidth=1) +
+  # Arrow down
+  annotate("segment", x=0.5, xend=0.5, y=3.1, yend=2.7,
+           arrow=arrow(length=unit(0.1,"in"),type="closed"), color="#888", linewidth=0.8, linetype="dashed") +
+  annotate("text", x=0.5, y=2.9, label="HF 2.0", fontface="bold", color="#4a7c59", size=4) +
+  # HF 2.0 section
+  annotate("rect", xmin=0, xmax=1, ymin=0.3, ymax=2.5, fill="#e6f3ec", alpha=0.4, color="#4a7c59", linewidth=0.8) +
+  geom_tile(data=hf2_inputs, aes(x=x, y=y, fill=fill), width=0.29, height=0.45, color="#4a7c59", linewidth=0.7) +
+  geom_text(data=hf2_inputs, aes(x=x, y=y, label=label), size=3.2, color="#2c5f3a", fontface="bold", lineheight=1.1) +
+  # Arrows converging
+  annotate("segment", x=0.18, xend=0.43, y=1.57, yend=1.0, arrow=arrow(length=unit(0.09,"in"),type="closed"), color="#4a7c59", linewidth=0.8) +
+  annotate("segment", x=0.5,  xend=0.5,  y=1.57, yend=1.0, arrow=arrow(length=unit(0.09,"in"),type="closed"), color="#4a7c59", linewidth=0.8) +
+  annotate("segment", x=0.82, xend=0.57, y=1.57, yend=1.0, arrow=arrow(length=unit(0.09,"in"),type="closed"), color="#4a7c59", linewidth=0.8) +
+  geom_tile(data=hf2_output, aes(x=x, y=y, fill=fill), width=0.55, height=0.45, color="#2c5f3a", linewidth=1) +
+  geom_text(data=hf2_output, aes(x=x, y=y, label=label), size=3.8, color="white", fontface="bold", lineheight=1.1) +
+  scale_fill_identity() +
+  xlim(0, 1) + ylim(0.1, 4.1) +
+  theme_void()
+```
+
+:::
+::: {.column width="50%"}
+
+<div style="font-size: 1.0em; font-weight: 600; color: #1f4e79; margin-bottom: 0.7em;">The gap HF 2.0 closes</div>
+
+::: {.key-finding}
+**Same stage ≠ same family**
+
+Two families with a 3-month-old infant may have completely different needs — breastfeeding history, maternal depression, knowledge gaps — but HF 1.0 delivers identical content.
+:::
+
+<div class="visual-box" style="margin-top: 0.8em;"><span class="icon">🤖</span><div><strong>AI-based prioritization</strong> — rank content relevance from family data + response patterns</div></div>
+<div class="visual-box"><span class="icon">🗣️</span><div><strong>Preference elicitation</strong> — structured family choice bypasses cold-start data problem</div></div>
+
+::: {.policy style="margin-top: 0.8em;"}
+**Funded:** Cyrus Tang Foundation · 3-year program · Starting 2025<br>
+**Built on:** CareLoom (open-source) · github.com/DHEPLab
+:::
+
+:::
+:::
+
+---
+
+## The Personalization Challenge in LMIC Settings
+
+::: columns
+::: {.column width="52%"}
+
+<div style="font-size: 1.05em; font-weight: 600; color: #1f4e79; margin-bottom: 0.8em;">The challenge isn't the algorithm — it's the signal</div>
+
+```{r challenge-table}
+#| fig-height: 3.2
+#| fig-width: 5.8
+
+# Use numeric y positions for a fully continuous coordinate system
+tbl_pos <- tibble(
+  y_pos    = c(2, 1),
+  setting  = c("Online platform", "HF CHW program"),
+  fill_col = c("#dce6f1","#fff3e0"),
+  Users    = c("Millions", "~1,000s"),
+  Signal   = c("Clicks,\nseconds", "Outcomes,\nmonths"),
+  Data     = c("Continuous", "30 min/visit"),
+  Learning = c("Fast", "Slow")
+)
+
+ggplot(tbl_pos) +
+  # background tiles
+  geom_rect(aes(xmin=-0.2, xmax=8.2, ymin=y_pos-0.4, ymax=y_pos+0.4, fill=fill_col), alpha=0.6) +
+  # header row
+  annotate("text", x=c(0.8,2.8,4.8,6.8), y=2.85,
+           label=c("Scale","Feedback signal","Data per family","Learning speed"),
+           fontface="bold", color=HF_GRAY, size=3.8, hjust=0.5) +
+  annotate("segment", x=-0.2, xend=8.2, y=2.55, yend=2.55, color="#ccc", linewidth=0.6) +
+  # setting names
+  geom_text(data=tbl_pos, aes(x=-0.1, y=y_pos, label=setting), hjust=1,
+            size=3.8, fontface="bold", color=HF_BLUE) +
+  # data cells
+  geom_text(data=tbl_pos, aes(x=0.8, y=y_pos, label=Users),    size=3.8, hjust=0.5) +
+  geom_text(data=tbl_pos, aes(x=2.8, y=y_pos, label=Signal),   size=3.8, hjust=0.5, lineheight=1.0) +
+  geom_text(data=tbl_pos, aes(x=4.8, y=y_pos, label=Data),     size=3.8, hjust=0.5) +
+  geom_text(data=tbl_pos, aes(x=6.8, y=y_pos, label=Learning), size=3.8, hjust=0.5) +
+  scale_fill_identity() +
+  coord_cartesian(xlim=c(-2.5, 8.5), ylim=c(0.4, 3.2)) +
+  theme_void()
+```
+
+:::
+::: {.column width="48%"}
+
+<div style="font-size: 1.0em; font-weight: 600; color: #1f4e79; margin-bottom: 0.5em;">Two solutions</div>
+
+::: {.key-finding}
+**Surrogate index**
+
+Short-term intermediate outcomes that predict long-run child health → generate usable optimization signal faster — without waiting years
+:::
+
+::: {.policy style="margin-top: 0.8em;"}
+**Preference elicitation**
+
+Families have private knowledge about their own circumstances → structured choice bypasses the cold-start data problem entirely
+:::
+
+:::
+:::
+
+---
+
+## Implications for Scale
+
+::: columns
+::: {.column width="50%"}
+
+<div style="font-size: 1.05em; font-weight: 600; color: #1f4e79; margin-bottom: 0.8em;">Three actionable levers</div>
+
+<div class="visual-box"><span class="icon">📅</span><div><strong>When</strong> — Enroll during pregnancy, not just post-partum</div></div>
+<div class="visual-box"><span class="icon">🎯</span><div><strong>What</strong> — Personalize by family circumstances, not just stage</div></div>
+<div class="visual-box"><span class="icon">📈</span><div><strong>How</strong> — Use short-term signals to learn faster and adapt</div></div>
+
+<div style="margin-top: 1em; font-size: 0.9em; color: #767171;">
+China has ~1 million CHWs · Small per-family gains compound at national scale<br>
+CareLoom is open-source — any MCH program can adapt it
+</div>
+
+:::
+::: {.column width="50%"}
+
+<div style="font-size: 1.0em; font-weight: 600; color: #1f4e79; margin-bottom: 0.5em;">For national program design</div>
+
+::: {.policy}
+The entry-timing finding is the most immediately actionable result:
+
+**Pregnancy enrollment is a priority design choice.**
+
+Programs that begin CHW engagement only post-partum are systematically missing the highest-return window — and the data now shows by how much.
+:::
+
+::: {.key-finding style="margin-top: 0.8em;"}
+HF 2.0 builds the next layer: moving from knowing *when* to start, to knowing *what* to deliver and *to whom* — at scale.
+:::
+
+:::
+:::
+
+---
+
+## Summary {.center}
+
+<div style="display: flex; gap: 2.5em; justify-content: center; margin-top: 1em; margin-bottom: 1.5em;">
+
+<div style="flex:1; max-width: 300px; text-align: center; padding: 0.5em;">
+<div class="takeaway-num">1</div>
+<div class="takeaway-title">The program works</div>
+<div class="takeaway-text">Significant effects on dietary diversity, feeding practices, maternal mental health, and caregiving knowledge — delivered through CHW home visits via CareLoom.</div>
+</div>
+
+<div style="flex:1; max-width: 300px; text-align: center; padding: 0.5em;">
+<div class="takeaway-num">2</div>
+<div class="takeaway-title">Early entry matters</div>
+<div class="takeaway-text">Families enrolled during pregnancy see the strongest child health gains. Intermediate outcomes at follow-up predict long-run trajectories.</div>
+</div>
+
+<div style="flex:1; max-width: 300px; text-align: center; padding: 0.5em;">
+<div class="takeaway-num">3</div>
+<div class="takeaway-title">The next frontier</div>
+<div class="takeaway-text">Moving from stage-based to circumstances-based personalization. HF 2.0 is a funded 3-year program — built on open-source CareLoom.</div>
+</div>
+
+</div>
+
+::: {.key-finding style="text-align: center; font-size: 1.0em; max-width: 700px; margin: 0 auto;"}
+*When does algorithmic content tailoring outperform asking families directly what they need? HF 2.0 is designed to answer that question.*
+:::
+
+---
+
+## {.center background-color="#1f4e79"}
+
+::: {style="color: white; text-align: center; padding-top: 60px;"}
+
+<div style="font-size: 1.5em; font-weight: 700; margin-bottom: 0.6em;">Thank You</div>
+
+<div style="font-size: 1.0em; color: #cce0f5; margin-bottom: 0.4em;">
+<strong style="color:white;">Sean Sylvia</strong> | sysylvia@email.unc.edu<br>
+UNC Gillings School of Global Public Health
+</div>
+
+<div style="font-size: 0.85em; color: #9ec5e8; border-top: 1px solid #3a7ab8; padding-top: 0.8em; margin-top: 1em;">
+Cyrus Tang Foundation · Stanford REAP · UNC Gillings · University of Nevada, Reno<br>
+Sichuan University · The CHWs and families who participated
+</div>
+
+<div style="margin-top: 1em; font-size: 0.9em; color: #b8d4f0;">
+<strong>CareLoom platform:</strong> github.com/DHEPLab &nbsp;·&nbsp;
+<strong>Slides & analysis:</strong> github.com/sysylvia/hf-belgium-talk
+</div>
+
+:::
+
+---
+
+# Appendix {.center background-color="#595959"}
+
+---
+
+## A1 — Post-Double-Selection LASSO
+
+**Why this method?**
+
+- Standard RCT regression: add pre-specified controls; risk of omitting important predictors
+- PDS-LASSO runs two separate LASSO procedures (on outcome and treatment) to identify which baseline covariates are strong predictors; includes those in the final regression
+- Result: improved statistical power, reduced SEs, without arbitrary variable selection
+- In HF: baseline maternal dietary diversity was selected → controlling for it substantially reduced SEs on the DDS outcome (p: 0.051 → 0.035)
+- Increasingly standard in economics RCT papers; still novel in public health literature
+
+**Pre-generated controls in `HF_main_anasam.dta`:**  
+`_CHILD_*`, `_FAM_*`, `_CARE_*`, `_CID_*` — already constructed by the Stata pipeline; used directly in this R analysis.
+
+---
+
+## A2 — Surrogate Index Framework
+
+**Technical details (Athey et al. 2019)**
+
+Construct a composite $S$ of short-run outcomes that together predict long-run outcome $Y$ in the control group:
+
+$$E[Y \mid X, T] \approx E[E[Y \mid S, X] \mid X, T]$$
+
+**In HF context — candidate surrogates:**
+- Dietary diversity score (6-month interim)
+- Breastfeeding practices
+- Caregiver knowledge index
+- Maternal depression score
+- Perceived social support
+
+**HF 2.0 Phase 1:** Formally estimate surrogate index; validate on HF 1.0 control group data; use as optimization target for content recommendation algorithm.
+
+---
+
+## A3 — Heterogeneous Effects
+
+**Siva Balakrishnan's parametric HTE analysis (UNR)**
+
+- Estimates treatment effect separately for family subgroups defined by baseline characteristics
+- "Top 20%" finding: dietary diversity effects concentrated in high-predicted-response families
+- EBF and hemoglobin: not significant even within subgroups
+
+**Future work (HF 2.0):**
+- Causal forest / `grf` package for non-parametric CATE estimation
+- RATE analysis (Yadlowsky et al. 2021) to quantify targeting gains

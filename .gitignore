@@ -1,0 +1,11 @@
+data/*.dta
+data/*.csv
+outputs/
+_site/
+_freeze/
+.Rhistory
+.RData
+.quarto/
+*.html
+
+/.quarto/

@@ -1,0 +1,47 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - "*.qmd"
+    - "analysis/**/*.qmd"
+    - "slides/**/*.qmd"
+
+format:
+  html:
+    theme: [cosmo, style/hf.scss]
+    mainfont: "Source Sans Pro"
+    highlight-style: a11y-light
+    toc: true
+    code-fold: true
+    code-copy: hover
+
+website:
+  title: "Healthy Future — Belgium Talk 2026"
+  description: "Analysis for Stanford REAP Conference, Leuven, March 28, 2026"
+  site-url: "https://hf-belgium.ssylvia.io"
+
+  navbar:
+    background: "#1f4e79"
+    foreground: white
+    title: "HF Belgium Talk"
+    left:
+      - href: index.qmd
+        text: Home
+      - href: analysis/hf_analysis.qmd
+        text: Analysis
+      - href: slides/hf_slides.qmd
+        text: Slides
+
+  page-footer:
+    right: "Built with [Quarto](https://quarto.org/)"
+    left: "Sean Sylvia · UNC Chapel Hill · March 2026"
+    background: "#f7f9fc"
+
+execute:
+  freeze: auto
+  warning: false
+  message: false
+
+linkcolor: "#2e75b6"
+toc: true
+code-overflow: wrap
