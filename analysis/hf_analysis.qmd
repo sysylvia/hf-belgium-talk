@@ -803,6 +803,319 @@ cat(glue(
 
 ---
 
+## CATE Heterogeneity Screening Across All Outcomes {#cate-screen}
+
+> **Research question:** For which outcomes does the Healthy Future program show meaningful treatment effect heterogeneity? We screen all primary and secondary outcomes using causal forests + Best Linear Projection (BLP) tests to identify where personalization might matter most.
+
+```{r}
+#| label: cate-screen-setup
+#| code-fold: true
+
+# Use the SAME covariate set as the dietary diversity CATE (Slide 10)
+# cate_vars is already defined above
+
+# All outcome variables to screen
+outcomes_to_screen <- tribble(
+  ~variable,             ~label,                              ~domain,
+  "FLVAR_CH_HEMO",       "Hemoglobin Level (g/dL)",           "Primary",
+  "FLVAR_FEED_EBF",      "Exclusive Breastfeeding",           "Primary",
+  "FLVAR_FEED_DDS",      "Dietary Diversity Score",           "Primary",
+  "IN_CH",               "Child Health Index",                "Secondary",
+  "IN_BFI",              "Breastfeeding Initiation Index",    "Secondary",
+  "IN_CF",               "Complementary Feeding Index",       "Secondary",
+  "IN_PRIKNOW_CH",       "Caregiving Knowledge Index",        "Secondary",
+  "IN_EPDS",             "Maternal Mental Health (EPDS)",     "Secondary",
+  "IN_DASS",             "Caregiver Mental Health (DASS)",    "Secondary",
+  "IN_SS",               "Perceived Social Support Index",    "Secondary",
+  "FLVAR_EFEED_EIBF",    "Early Initiation of BF",           "Breastfeeding",
+  "FLVAR_EFEED_COLOS",   "Colostrum Feeding",                "Breastfeeding",
+  "FLVAR_EFEED_EvBF",    "Ever Breastfed",                   "Breastfeeding",
+  "FLVAR_FEED_MDD",      "Minimum Dietary Diversity",         "Feeding",
+  "FLVAR_FEED_MAD",      "Minimum Acceptable Diet",           "Feeding"
+)
+
+# Build base complete-case dataset on covariates + treatment + cluster
+# Outcomes are allowed to have NAs (handled per-outcome below)
+outcome_vars_present <- outcomes_to_screen$variable[
+  outcomes_to_screen$variable %in% names(df)
+]
+
+base_df <- df |>
+  select(all_of(c("treat", "TID", cate_vars)),
+         any_of(outcome_vars_present)) |>
+  filter(complete.cases(across(all_of(c("treat", "TID", cate_vars)))))
+
+cat(glue("Base covariate-complete sample: {nrow(base_df)} obs (of {nrow(df)} total)\n"))
+cat(glue("Outcome variables present in data: {length(outcome_vars_present)} of {nrow(outcomes_to_screen)}\n"))
+
+# Pre-compute covariate matrix, treatment, and cluster vectors for the base sample
+X_base       <- base_df |> select(all_of(cate_vars)) |> as.matrix()
+W_base       <- as.numeric(base_df$treat)
+cluster_base <- as.integer(as.factor(base_df$TID))
+
+# Screening function: fit causal_forest and return BLP test results
+run_cate_screen <- function(outcome_var, outcome_label, df_complete, X_mat, W_vec, cluster_vec) {
+  if (!outcome_var %in% names(df_complete)) {
+    message(glue("  SKIP: {outcome_var} not found in data"))
+    return(NULL)
+  }
+  
+  Y <- as.numeric(df_complete[[outcome_var]])
+  if (sum(!is.na(Y)) < 50) {
+    message(glue("  SKIP: {outcome_var} has fewer than 50 non-missing observations"))
+    return(NULL)
+  }
+  
+  # Subset to non-missing outcome rows
+  ok <- !is.na(Y)
+  
+  tryCatch({
+    cf_s <- causal_forest(
+      X_mat[ok, , drop = FALSE],
+      Y[ok],
+      W_vec[ok],
+      clusters  = cluster_vec[ok],
+      num.trees = 2000,
+      seed      = 2026
+    )
+    
+    ate_s <- average_treatment_effect(cf_s)
+    blp_s <- test_calibration(cf_s)
+    
+    # test_calibration returns a coeftest matrix
+    # Row 2 = "differential.forest.prediction" 
+    blp_mat <- as.matrix(blp_s)
+    
+    # Safely extract differential prediction row
+    diff_row <- if ("differential.forest.prediction" %in% rownames(blp_mat)) {
+      blp_mat["differential.forest.prediction", ]
+    } else {
+      blp_mat[2, ]
+    }
+    
+    # p-value is last column
+    blp_p_val <- diff_row[length(diff_row)]
+    
+    tibble(
+      outcome         = outcome_label,
+      variable        = outcome_var,
+      n               = sum(ok),
+      ate_est         = ate_s[["estimate"]],
+      ate_se          = ate_s[["std.err"]],
+      blp_coef        = diff_row[["Estimate"]],
+      blp_se          = diff_row[["Std. Error"]],
+      blp_p           = blp_p_val,
+      has_heterogeneity = blp_p_val < 0.10
+    )
+  }, error = function(e) {
+    message(glue("  ERROR in {outcome_var}: {e$message}"))
+    NULL
+  })
+}
+```
+
+### Run Causal Forests for All Outcomes
+
+```{r}
+#| label: cate-screen-run
+#| cache: false
+
+# Loop over all outcomes present in the data
+cat("Running causal forests for all outcomes...\n")
+cat("(This may take a few minutes — 2,000 trees per outcome)\n\n")
+
+screen_results <- map2_dfr(
+  outcomes_to_screen$variable,
+  outcomes_to_screen$label,
+  function(v, lbl) {
+    cat(glue("  -> {lbl} ({v})\n"))
+    run_cate_screen(
+      outcome_var   = v,
+      outcome_label = lbl,
+      df_complete   = base_df,
+      X_mat         = X_base,
+      W_vec         = W_base,
+      cluster_vec   = cluster_base
+    )
+  }
+)
+
+# Join domain information
+screen_results <- screen_results |>
+  left_join(outcomes_to_screen |> select(variable, domain), by = "variable") |>
+  mutate(
+    domain = factor(domain, levels = c("Primary", "Secondary", "Breastfeeding", "Feeding")),
+    outcome = factor(outcome, levels = outcome)  # preserve order
+  )
+
+cat(glue("\nCompleted: {nrow(screen_results)} outcomes screened\n"))
+cat(glue("Significant heterogeneity (BLP p < 0.10): {sum(screen_results$has_heterogeneity)} outcomes\n"))
+print(screen_results |> filter(has_heterogeneity) |> select(outcome, variable, blp_coef, blp_p))
+```
+
+### Summary Table
+
+```{r}
+#| label: cate-screen-table
+
+screen_tbl_data <- screen_results |>
+  arrange(domain, blp_p) |>
+  mutate(
+    ate_str  = glue("{round(ate_est, 3)} ({round(ate_se, 3)})"),
+    blp_str  = glue("{round(blp_coef, 3)} ({round(blp_se, 3)})"),
+    blp_p_   = round(blp_p, 4),
+    flag     = if_else(has_heterogeneity, "✓", ""),
+    het_flag = has_heterogeneity  # keep for styling
+  )
+
+# Row indices with heterogeneity (after arrange)
+sig_rows <- which(screen_tbl_data$het_flag)
+
+screen_tbl_data |>
+  select(
+    Domain = domain,
+    Outcome = outcome,
+    N = n,
+    `ATE (SE)` = ate_str,
+    `BLP Coef. (SE)` = blp_str,
+    `BLP p-value` = blp_p_,
+    `Heterogeneity` = flag
+  ) |>
+  gt(groupname_col = "Domain") |>
+  tab_header(
+    title    = "Heterogeneity Screening — BLP Test Across All Outcomes",
+    subtitle = "Causal forest + Best Linear Projection test · 2,000 trees · clustered by township"
+  ) |>
+  tab_footnote(
+    footnote = "BLP test (Chernozhukov et al. 2018): coefficient on differential forest prediction. p < 0.10 suggests meaningful heterogeneity. ATE from forest using out-of-bag predictions.",
+    locations = cells_title()
+  ) |>
+  tab_style(
+    style     = cell_fill(color = "#e2efda"),
+    locations = cells_body(rows = sig_rows)
+  ) |>
+  tab_style(
+    style     = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = `BLP p-value`, rows = sig_rows)
+  ) |>
+  cols_align(align = "center", columns = c(N, `BLP p-value`, Heterogeneity)) |>
+  gtsave(file.path(table_path, "BT_cate_screen_blp.html"))
+```
+
+### BLP p-value Plot
+
+```{r}
+#| label: cate-screen-figure
+#| fig-cap: "BLP test p-values across all outcomes. Points left of the dashed line (p = 0.10) indicate meaningful treatment effect heterogeneity."
+#| fig-height: 6.5
+
+screen_results |>
+  mutate(
+    outcome = fct_reorder(outcome, blp_p),
+    sig_label = if_else(has_heterogeneity, "p < 0.10 (heterogeneity)", "p ≥ 0.10 (homogeneous)")
+  ) |>
+  ggplot(aes(x = blp_p, y = outcome, color = has_heterogeneity, shape = domain)) +
+  geom_vline(xintercept = 0.10, linetype = "dashed", color = HF_ORANGE, linewidth = 1.0) +
+  geom_point(size = 4.5, alpha = 0.9) +
+  geom_text(
+    data = ~ filter(., has_heterogeneity),
+    aes(label = glue("p={round(blp_p,3)}")),
+    hjust = -0.15, size = 3.2, fontface = "bold"
+  ) +
+  annotate("text", x = 0.10, y = 0.5,
+           label = "p = 0.10", color = HF_ORANGE,
+           hjust = -0.1, vjust = 0, size = 3.5, fontface = "italic") +
+  scale_color_manual(
+    values = c("FALSE" = HF_GRAY, "TRUE" = HF_GREEN),
+    labels = c("p ≥ 0.10", "p < 0.10 ✓"),
+    name   = "Heterogeneity"
+  ) +
+  scale_shape_manual(
+    values = c("Primary" = 19, "Secondary" = 17, "Breastfeeding" = 15, "Feeding" = 18),
+    name   = "Domain"
+  ) +
+  scale_x_continuous(
+    limits = c(0, NA),
+    expand = expansion(mult = c(0.02, 0.25)),
+    breaks = c(0, 0.10, 0.25, 0.50, 0.75, 1.00)
+  ) +
+  labs(
+    title    = "Which Outcomes Show Meaningful Treatment Effect Heterogeneity?",
+    subtitle = "BLP test (Best Linear Projection) · Causal forest · 2,000 trees",
+    x        = "BLP p-value (differential forest prediction)",
+    y        = NULL,
+    caption  = "Chernozhukov et al. (2018). Dashed line = p = 0.10 threshold. Green = significant heterogeneity."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = HF_BLUE, size = 13),
+    plot.subtitle = element_text(color = HF_GRAY, size = 10),
+    plot.caption  = element_text(color = HF_GRAY, size = 8.5),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(file.path(fig_path, "BT_cate_screen_blp.png"), width = 9, height = 6.5, dpi = 200)
+```
+
+### Interpretation
+
+```{r}
+#| label: cate-screen-interp
+#| code-fold: false
+
+# Summarize findings
+n_sig <- sum(screen_results$has_heterogeneity)
+sig_outcomes <- screen_results |>
+  filter(has_heterogeneity) |>
+  arrange(blp_p) |>
+  pull(outcome)
+
+if (n_sig > 0) {
+  cat(glue(
+    "=== Heterogeneity Screening Results ===\n\n",
+    "Outcomes with significant heterogeneity (BLP p < 0.10):\n"
+  ))
+  walk2(sig_outcomes, 
+        screen_results |> filter(has_heterogeneity) |> arrange(blp_p) |> pull(blp_p),
+        ~cat(glue("  - {.x}: BLP p = {round(.y, 4)}\n")))
+  cat(glue(
+    "\n{n_sig} of {nrow(screen_results)} outcomes show meaningful heterogeneity.\n",
+    "These are the strongest candidates for full RATE analysis and targeting.\n"
+  ))
+} else {
+  cat(glue(
+    "No outcomes showed significant heterogeneity at p < 0.10.\n",
+    "Total outcomes screened: {nrow(screen_results)}\n",
+    "This suggests treatment effects are broadly consistent across the population.\n"
+  ))
+}
+
+# Recommendation
+cat(glue(
+  "\n=== Recommended for Full RATE Analysis ===\n",
+  "Outcomes with BLP p < 0.20 (broadened threshold):\n"
+))
+screen_results |>
+  filter(blp_p < 0.20) |>
+  arrange(blp_p) |>
+  select(outcome, blp_p, ate_est, ate_se) |>
+  mutate(across(where(is.numeric), ~round(., 4))) |>
+  print()
+```
+
+::: {.callout-note}
+**Heterogeneity Screening — Key Takeaways**
+
+The BLP test systematically assessed whether the Healthy Future program's treatment effects vary meaningfully across families for each of the 15 screened outcomes. Outcomes with a significant BLP p-value (< 0.10) indicate that the causal forest's predictions of *who benefits more* are statistically validated — the families predicted to benefit most actually do benefit most when evaluated out-of-bag.
+
+`r if(sum(screen_results$has_heterogeneity) > 0) { glue("**{sum(screen_results$has_heterogeneity)} outcome(s) show significant heterogeneity:** {paste(screen_results$outcome[screen_results$has_heterogeneity], collapse=', ')}. These are the strongest candidates for a full RATE (Rank-Weighted Average Treatment Effect) analysis and precision targeting in HF 2.0.") } else { "No outcomes showed statistically significant heterogeneity at the 10% level, suggesting that HF's treatment effects are broadly homogeneous across the population studied. This is itself informative: the program may benefit families similarly regardless of baseline characteristics, which reduces the case for selective targeting but strengthens the case for broad scale-up." }`
+
+For HF 2.0 design, outcomes exhibiting heterogeneity suggest that baseline assessments (child age, maternal mental health, household assets, baseline feeding practices) could be used to identify which families would benefit most from intensified or tailored intervention components — the core value proposition of a learning health system.
+:::
+
+---
+
 ## Output Summary
 
 ```{r}
