@@ -1,0 +1,212 @@
+[
+  {
+    "objectID": "analysis/hf_analysis.html",
+    "href": "analysis/hf_analysis.html",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "",
+    "text": "library(haven)\nlibrary(dplyr)\nlibrary(tidyr)\nlibrary(purrr)\nlibrary(forcats)\nlibrary(tibble)\nlibrary(stringr)\nlibrary(fixest)     # feols — fast, cluster SEs, FEs\nlibrary(ggplot2)\nlibrary(patchwork)\nlibrary(gt)\nlibrary(scales)\nlibrary(glue)\n\n# Paths\ndata_path   &lt;- here::here(\"data\", \"HF_main_anasam.dta\")\nfig_path    &lt;- here::here(\"outputs\", \"figures\")\ntable_path  &lt;- here::here(\"outputs\", \"tables\")\n\ndir.create(fig_path,   showWarnings = FALSE, recursive = TRUE)\ndir.create(table_path, showWarnings = FALSE, recursive = TRUE)\n\n# Load\ndf &lt;- read_dta(data_path)\ncat(glue(\"Loaded: {nrow(df)} obs × {ncol(df)} variables\\n\"))\n\nLoaded: 1148 obs × 406 variables\n\ncat(glue(\"Treatment: {sum(df$treat==1)} treated, {sum(df$treat==0)} control\\n\"))\n\nTreatment: 485 treated, 663 control\n\n# Brand colors\nHF_BLUE   &lt;- \"#1f4e79\"\nHF_TEAL   &lt;- \"#2e75b6\"\nHF_ORANGE &lt;- \"#ed7d31\"\nHF_GREEN  &lt;- \"#4a7c59\"\nHF_GRAY   &lt;- \"#767171\"\n\n# LASSO-selected controls already in dataset\nlasso_cols &lt;- df |&gt; select(starts_with(c(\"_CHILD_\", \"_FAM_\", \"_CARE_\", \"_CID_\"))) |&gt; names()\ncat(glue(\"{length(lasso_cols)} LASSO control variables loaded\\n\"))\n\n117 LASSO control variables loaded\n\n# Helper: star labels\nadd_stars &lt;- function(p) {\n  case_when(p &lt; 0.01 ~ \"***\", p &lt; 0.05 ~ \"**\", p &lt; 0.10 ~ \"*\", TRUE ~ \"\")\n}\n\n# Helper: quote non-syntactic variable names for formulas\nbt &lt;- function(x) paste0(\"`\", x, \"`\")\n\n# Helper: run OLS ITT with cluster SEs via fixest\n# Uses pre-selected LASSO controls + county FEs\nrun_itt &lt;- function(outcome, data = df) {\n  controls &lt;- lasso_cols[lasso_cols %in% names(data)]\n  rhs &lt;- paste(c(\"treat\", bt(controls)), collapse = \" + \")\n  fml &lt;- as.formula(paste(bt(outcome), \"~\", rhs))\n  feols(fml, data = data, cluster = ~TID, warn = FALSE)\n}"
+  },
+  {
+    "objectID": "analysis/hf_analysis.html#slide-6-primary-outcomes",
+    "href": "analysis/hf_analysis.html#slide-6-primary-outcomes",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "Slide 6 — Primary Outcomes",
+    "text": "Slide 6 — Primary Outcomes\nPrimary outcomes: hemoglobin level (g/dL), exclusive breastfeeding (0/1), dietary diversity score.\n\nMethod: OLS with pre-selected LASSO controls + county FEs, cluster-robust SEs by township (TID). This approximates the pdslasso approach used in the Stata paper code, using the _CHILD_*, _FAM_*, _CARE_*, _CID_* controls already generated in the dataset.\n\n\n\nCode\nprimary_vars &lt;- c(\n  \"FLVAR_CH_HEMO\"  = \"Hemoglobin Level (g/dL)\",\n  \"FLVAR_FEED_EBF\" = \"Exclusive Breastfeeding (0/1)\",\n  \"FLVAR_FEED_DDS\" = \"Dietary Diversity Score\"\n)\n\nprimary_res &lt;- map_dfr(names(primary_vars), function(v) {\n  m &lt;- run_itt(v)\n  ctrl_mean &lt;- df |&gt; filter(treat == 0) |&gt; pull(v) |&gt; mean(na.rm = TRUE)\n  tibble(\n    outcome   = primary_vars[[v]],\n    b         = coef(m)[\"treat\"],\n    se        = se(m)[\"treat\"],\n    p         = fixest::pvalue(m)[\"treat\"],\n    ci_lo     = coef(m)[\"treat\"] - 1.645 * fixest::se(m)[\"treat\"],\n    ci_hi     = coef(m)[\"treat\"] + 1.645 * fixest::se(m)[\"treat\"],\n    ctrl_mean = ctrl_mean,\n    n         = nobs(m)\n  )\n})\n\n# Table\nprimary_res |&gt;\n  mutate(\n    coeff = glue(\"{round(b,3)}{add_stars(p)}\"),\n    se_   = glue(\"({round(se,3)})\"),\n    ci    = glue(\"[{round(ci_lo,3)}, {round(ci_hi,3)}]\"),\n    p_    = round(p, 4),\n    ctrl  = round(ctrl_mean, 3)\n  ) |&gt;\n  select(Outcome=outcome, Effect=coeff, SE=se_, `90% CI`=ci, `p-value`=p_, `Control Mean`=ctrl, N=n) |&gt;\n  gt() |&gt;\n  tab_header(title = \"Primary Outcomes — ITT Estimates\") |&gt;\n  tab_footnote(\"* p&lt;0.10  ** p&lt;0.05  *** p&lt;0.01 | OLS with LASSO controls + county FEs, cluster SEs (township)\") |&gt;\n  tab_style(style = cell_fill(color = \"#e2efda\"),\n            locations = cells_body(rows = 3)) |&gt;\n  gtsave(file.path(table_path, \"BT_slide6_primary.html\"))\n\n\n\n\nCode\nprimary_res |&gt;\n  mutate(\n    outcome = factor(outcome, levels = rev(outcome)),\n    sig     = p &lt; 0.10,\n    label   = glue(\"{round(b,3)}{add_stars(p)}\")\n  ) |&gt;\n  ggplot(aes(y = outcome, x = b, xmin = ci_lo, xmax = ci_hi, color = sig)) +\n  geom_vline(xintercept = 0, linetype = \"dashed\", color = HF_GRAY, linewidth = 0.6) +\n  geom_errorbarh(height = 0.2, linewidth = 1) +\n  geom_point(aes(shape = sig), size = 4) +\n  geom_text(aes(label = label, x = ci_hi), hjust = -0.2, size = 3.5, fontface = \"bold\") +\n  scale_color_manual(values = c(\"FALSE\" = HF_GRAY, \"TRUE\" = HF_TEAL), guide = \"none\") +\n  scale_shape_manual(values = c(\"FALSE\" = 1, \"TRUE\" = 19), guide = \"none\") +\n  scale_x_continuous(expand = expansion(mult = c(0.05, 0.25))) +\n  labs(\n    title = \"Primary Outcomes\",\n    x = \"Treatment Effect (90% CI)\",\n    y = NULL,\n    caption = \"OLS with LASSO controls + county FEs · Cluster SEs by township · Filled = p&lt;0.10\"\n  ) +\n  theme_minimal(base_size = 12) +\n  theme(\n    plot.title    = element_text(face = \"bold\", color = HF_BLUE),\n    plot.caption  = element_text(color = HF_GRAY, size = 8),\n    panel.grid.minor = element_blank()\n  )\n\n\n\n\n\nPrimary outcomes table — talk-ready\n\n\n\n\nCode\nggsave(file.path(fig_path, \"BT_slide6_primary.png\"), width = 8, height = 2.5, dpi = 200)"
+  },
+  {
+    "objectID": "analysis/hf_analysis.html#slide-7-secondary-outcomes-forest-plot",
+    "href": "analysis/hf_analysis.html#slide-7-secondary-outcomes-forest-plot",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "Slide 7 — Secondary Outcomes Forest Plot",
+    "text": "Slide 7 — Secondary Outcomes Forest Plot\n\n\nCode\ndomain_vars &lt;- tribble(\n  ~var,           ~label,                        ~group,\n  \"IN_CH\",         \"Child Health Index\",           \"child\",\n  \"IN_BFI\",        \"Breastfeeding Initiation\",     \"child\",\n  \"IN_CF\",         \"Complementary Feeding\",        \"child\",\n  \"IN_PRIKNOW_CH\", \"Caregiving Knowledge\",         \"caregiver\",\n  \"IN_EPDS\",       \"Maternal Mental Health (EPDS)\",\"caregiver\",\n  \"IN_DASS\",       \"Caregiver Mental Health (DASS)\",\"caregiver\",\n  \"IN_SS\",         \"Perceived Social Support\",     \"caregiver\"\n)\n\nsec_res &lt;- map_dfr(domain_vars$var, function(v) {\n  m &lt;- run_itt(v)\n  tibble(\n    var   = v,\n    b     = coef(m)[\"treat\"],\n    se    = se(m)[\"treat\"],\n    p     = fixest::pvalue(m)[\"treat\"],\n    ci_lo = coef(m)[\"treat\"] - 1.645 * fixest::se(m)[\"treat\"],\n    ci_hi = coef(m)[\"treat\"] + 1.645 * fixest::se(m)[\"treat\"],\n    n     = nobs(m)\n  )\n}) |&gt;\n  left_join(domain_vars, by = \"var\") |&gt;\n  mutate(\n    label = factor(label, levels = rev(domain_vars$label)),\n    sig   = p &lt; 0.10,\n    coeff_label = glue(\"{round(b,3)}{add_stars(p)}\")\n  )\n\nggplot(sec_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = group)) +\n  geom_vline(xintercept = 0, linetype = \"dashed\", color = HF_GRAY, linewidth = 0.7) +\n  geom_errorbarh(height = 0.25, linewidth = 1.1) +\n  geom_point(aes(shape = sig), size = 4.5) +\n  geom_text(aes(label = coeff_label, x = ci_hi), hjust = -0.15, size = 3.3) +\n  # Section headers\n  annotate(\"text\", x = -0.28, y = 7.6, label = \"Child Outcomes\", \n           fontface = \"bold\", color = HF_BLUE, hjust = 0, size = 3.8) +\n  annotate(\"text\", x = -0.28, y = 4.6, label = \"Caregiver Outcomes\",\n           fontface = \"bold\", color = HF_ORANGE, hjust = 0, size = 3.8) +\n  scale_color_manual(\n    values = c(\"child\" = HF_BLUE, \"caregiver\" = HF_ORANGE),\n    guide  = \"none\"\n  ) +\n  scale_shape_manual(\n    values = c(\"FALSE\" = 1, \"TRUE\" = 19),\n    labels = c(\"p ≥ 0.10\", \"p &lt; 0.10\"),\n    name   = NULL\n  ) +\n  scale_x_continuous(expand = expansion(mult = c(0.05, 0.25))) +\n  labs(\n    title   = \"Treatment Effects — Domain Indices\",\n    subtitle = \"90% confidence intervals · filled = significant at 10%\",\n    x = \"Treatment Effect (SD units)\",\n    y = NULL,\n    caption = \"OLS with pre-selected LASSO controls + county FEs · Cluster-robust SEs by township\"\n  ) +\n  theme_minimal(base_size = 12) +\n  theme(\n    plot.title    = element_text(face = \"bold\", color = HF_BLUE, size = 14),\n    plot.subtitle = element_text(color = HF_GRAY, size = 10),\n    plot.caption  = element_text(color = HF_GRAY, size = 8),\n    legend.position = \"bottom\",\n    panel.grid.minor = element_blank()\n  )\n\n\n\n\n\nSecondary outcomes — domain index ITT estimates, 90% CIs\n\n\n\n\nCode\nggsave(file.path(fig_path, \"BT_slide7_forest.png\"), width = 9, height = 5.5, dpi = 200)"
+  },
+  {
+    "objectID": "analysis/hf_analysis.html#slide-8-entry-timing-event-study",
+    "href": "analysis/hf_analysis.html#slide-8-entry-timing-event-study",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "Slide 8 — Entry Timing Event Study",
+    "text": "Slide 8 — Entry Timing Event Study\nEffects by child’s age at the start of the intervention. Negative age = in utero (enrolled during pregnancy).\n\n\nCode\n# BBVAR_AGE_MON_BASE2 = age in months at baseline/program start (negative = pregnancy)\ndf &lt;- df |&gt;\n  mutate(\n    age_entry = BBVAR_AGE_MON_BASE2,\n    entry_bin = case_when(\n      treat == 0                       ~ \"control\",\n      age_entry &lt; -3                   ~ \"preg_early\",   # Early pregnancy\n      age_entry &gt;= -3 & age_entry &lt; 0  ~ \"preg_late\",    # Late pregnancy\n      age_entry &gt;= 0  & age_entry &lt; 3  ~ \"inf_0_3\",      # 0–3m\n      age_entry &gt;= 3  & age_entry &lt; 6  ~ \"inf_3_6\",      # 3–6m\n      age_entry &gt;= 6                   ~ \"inf_6plus\",     # &gt;6m\n      TRUE ~ NA_character_\n    )\n  )\n\ndf |&gt; count(entry_bin) |&gt; arrange(entry_bin)\n\n\n# A tibble: 6 × 2\n  entry_bin      n\n  &lt;chr&gt;      &lt;int&gt;\n1 control      663\n2 inf_0_3      130\n3 inf_3_6      163\n4 inf_6plus      3\n5 preg_early    92\n6 preg_late     97\n\n\n\n\nCode\nevent_vars &lt;- tribble(\n  ~var,           ~title,\n  \"IN_CH\",         \"(a) Child Health Index\",\n  \"IN_DASS\",       \"(b) Caregiver Mental Health\",\n  \"IN_PRIKNOW_CH\", \"(c) Caregiving Knowledge\",\n  \"IN_SS\",         \"(d) Perceived Social Support\"\n)\n\nbins_order  &lt;- c(\"preg_early\", \"preg_late\", \"inf_0_3\", \"inf_3_6\")\nbin_labels  &lt;- c(\"Preg.\\n(early)\", \"Preg.\\n(late)\", \"Infancy\\n0–3m\", \"Infancy\\n3–6m\")\n\n# For each outcome × each entry bin: compare that bin vs control\nevent_res &lt;- map_dfr(event_vars$var, function(v) {\n  map_dfr(bins_order, function(b) {\n    sub &lt;- df |&gt; filter(entry_bin == b | treat == 0) |&gt;\n      mutate(d = as.integer(entry_bin == b & treat == 1))\n    controls_here &lt;- lasso_cols[lasso_cols %in% names(sub)]\n    fml &lt;- as.formula(paste(bt(v), \"~ d +\", paste(bt(controls_here), collapse = \" + \")))\n    m   &lt;- feols(fml, data = sub, cluster = ~TID, warn = FALSE)\n    tibble(\n      var   = v,\n      bin   = b,\n      b     = coef(m)[\"d\"],\n      se    = se(m)[\"d\"],\n      p     = fixest::pvalue(m)[\"d\"],\n      ci_lo = coef(m)[\"d\"] - 1.645 * fixest::se(m)[\"d\"],\n      ci_hi = coef(m)[\"d\"] + 1.645 * fixest::se(m)[\"d\"]\n    )\n  })\n}) |&gt;\n  mutate(\n    bin = factor(bin, levels = bins_order, labels = bin_labels),\n    sig = p &lt; 0.10\n  ) |&gt;\n  left_join(event_vars, by = \"var\") |&gt;\n  mutate(title = factor(title, levels = event_vars$title))\n\n# 2×2 panel\nggplot(event_res, aes(x = bin, y = b, ymin = ci_lo, ymax = ci_hi, color = sig, group = 1)) +\n  # Pregnancy shading\n  annotate(\"rect\", xmin = 0.5, xmax = 2.5, ymin = -Inf, ymax = Inf,\n           fill = \"#dce6f1\", alpha = 0.4) +\n  geom_hline(yintercept = 0, linetype = \"dashed\", color = \"red\", linewidth = 0.6) +\n  geom_line(color = HF_BLUE, linewidth = 0.7, alpha = 0.5) +\n  geom_errorbar(width = 0.18, linewidth = 1) +\n  geom_point(aes(shape = sig), size = 3.5) +\n  # Pregnancy / Infancy label\n  geom_vline(xintercept = 2.5, linetype = \"dotted\", color = HF_GRAY, linewidth = 0.7) +\n  annotate(\"text\", x = 1.5, y = Inf, label = \"Pregnancy\", vjust = 1.5,\n           size = 3.2, color = HF_GRAY, fontface = \"italic\") +\n  annotate(\"text\", x = 3.5, y = Inf, label = \"Infancy\",   vjust = 1.5,\n           size = 3.2, color = HF_GRAY, fontface = \"italic\") +\n  scale_color_manual(values = c(\"FALSE\" = HF_GRAY, \"TRUE\" = HF_TEAL), guide = \"none\") +\n  scale_shape_manual(values = c(\"FALSE\" = 1, \"TRUE\" = 19), guide = \"none\") +\n  coord_cartesian(ylim = c(-0.5, 0.65)) +\n  facet_wrap(~title, ncol = 2) +\n  labs(\n    title    = \"Effects by Stage at First Exposure\",\n    subtitle = \"90% confidence intervals · each group vs. control\",\n    x = \"Entry timing\",\n    y = \"Treatment effect (SD units)\",\n    caption  = \"OLS with LASSO controls + county FEs · Cluster SEs by township\"\n  ) +\n  theme_minimal(base_size = 11) +\n  theme(\n    plot.title    = element_text(face = \"bold\", color = HF_BLUE, size = 13),\n    plot.subtitle = element_text(color = HF_GRAY, size = 9),\n    plot.caption  = element_text(color = HF_GRAY, size = 8),\n    strip.text    = element_text(face = \"bold\", size = 10, color = HF_BLUE),\n    panel.grid.minor = element_blank()\n  )\n\n\n\n\n\nEntry timing — effects by stage at first exposure, 90% CIs\n\n\n\n\nCode\nggsave(file.path(fig_path, \"BT_slide8_event.png\"), width = 9, height = 6.5, dpi = 200)"
+  },
+  {
+    "objectID": "analysis/hf_analysis.html#slide-9-intermediate-outcomes-predict-child-health",
+    "href": "analysis/hf_analysis.html#slide-9-intermediate-outcomes-predict-child-health",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "Slide 9 — Intermediate Outcomes Predict Child Health",
+    "text": "Slide 9 — Intermediate Outcomes Predict Child Health\nNew analysis. Control group only. Standardized associations between intermediate outcomes at follow-up and the child health index — motivating the surrogate index framework for HF 2.0.\n\n\nCode\nctrl_df &lt;- df |&gt; filter(treat == 0)\ncat(glue(\"Control group N = {nrow(ctrl_df)}\\n\"))\n\n\nControl group N = 663\n\n\nCode\n# Standardize\nz_score &lt;- function(x) (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)\n\nsurrogates &lt;- tribble(\n  ~var,           ~label,\n  \"IN_CF\",         \"Complementary Feeding\",\n  \"IN_BFI\",        \"Breastfeeding Initiation\",\n  \"IN_PRIKNOW_CH\", \"Caregiving Knowledge\",\n  \"IN_DASS\",       \"Caregiver Mental Health\",\n  \"IN_SS\",         \"Perceived Social Support\"\n)\n\nctrl_std &lt;- ctrl_df |&gt;\n  mutate(\n    across(c(all_of(surrogates$var), \"IN_CH\"), z_score, .names = \"z_{.col}\")\n  )\n\nctrl_county &lt;- lasso_cols[lasso_cols %in% names(ctrl_std)]\n\nsurr_res &lt;- map_dfr(surrogates$var, function(v) {\n  fml &lt;- as.formula(paste(bt(\"z_IN_CH\"), \"~\", bt(paste0(\"z_\", v)), \"+\", paste(bt(ctrl_county), collapse = \" + \")))\n  m   &lt;- feols(fml, data = ctrl_std, cluster = ~TID, warn = FALSE)\n  coef_name &lt;- paste0(\"z_\", v)\n  tibble(\n    var   = v,\n    b     = coef(m)[coef_name],\n    se    = se(m)[coef_name],\n    p     = fixest::pvalue(m)[coef_name],\n    ci_lo = coef(m)[coef_name] - 1.96 * fixest::se(m)[coef_name],\n    ci_hi = coef(m)[coef_name] + 1.96 * fixest::se(m)[coef_name],\n    n     = nobs(m)\n  )\n}) |&gt;\n  left_join(surrogates, by = \"var\") |&gt;\n  mutate(\n    label = factor(label, levels = rev(surrogates$label)),\n    sig   = p &lt; 0.10,\n    coeff_label = glue(\"{round(b,3)}{add_stars(p)}\")\n  )\n\n# Save table\nsurr_res |&gt;\n  mutate(\n    b_   = glue(\"{round(b,3)}{add_stars(p)}\"),\n    se_  = glue(\"({round(se,3)})\"),\n    ci_  = glue(\"[{round(ci_lo,3)}, {round(ci_hi,3)}]\"),\n    p_   = round(p, 4)\n  ) |&gt;\n  select(Outcome=label, Coeff=b_, SE=se_, `95% CI`=ci_, `p-value`=p_, N=n) |&gt;\n  gt() |&gt;\n  tab_header(\n    title    = \"Intermediate Outcomes Predict Child Health\",\n    subtitle = \"Control group only · Standardized coefficients\"\n  ) |&gt;\n  tab_footnote(\"All variables in SD units. OLS with county FEs. Cluster SEs by township.\") |&gt;\n  gtsave(file.path(table_path, \"BT_slide9_predictive.html\"))\n\n# Figure\nggplot(surr_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = sig)) +\n  geom_vline(xintercept = 0, linetype = \"dashed\", color = HF_GRAY, linewidth = 0.7) +\n  geom_errorbarh(height = 0.25, linewidth = 1.2) +\n  geom_point(aes(shape = sig), size = 5) +\n  geom_text(aes(label = coeff_label, x = ci_hi), hjust = -0.15, size = 3.8, fontface = \"bold\") +\n  scale_color_manual(values = c(\"FALSE\" = HF_GRAY, \"TRUE\" = HF_ORANGE), guide = \"none\") +\n  scale_shape_manual(values = c(\"FALSE\" = 1, \"TRUE\" = 19), guide = \"none\") +\n  scale_x_continuous(expand = expansion(mult = c(0.05, 0.30))) +\n  labs(\n    title    = \"Intermediate Outcomes Predict Child Health Trajectories\",\n    subtitle = \"Control group only · 95% CI · all variables standardized (SD units)\",\n    x        = \"Association with Child Health Index (SD units)\",\n    y        = NULL,\n    caption  = glue(\n      \"OLS with county FEs · Cluster-robust SEs by township · N ≈ {min(surr_res$n)}\\n\",\n      \"Families with better intermediate outcomes at follow-up show stronger child health. \",\n      \"Motivates surrogate index framework for HF 2.0.\"\n    )\n  ) +\n  theme_minimal(base_size = 12) +\n  theme(\n    plot.title    = element_text(face = \"bold\", color = HF_BLUE, size = 13),\n    plot.subtitle = element_text(color = HF_GRAY, size = 10),\n    plot.caption  = element_text(color = HF_GRAY, size = 8.5),\n    panel.grid.minor = element_blank()\n  )\n\n\n\n\n\nIntermediate outcomes predicting child health (control group)\n\n\n\n\nCode\nggsave(file.path(fig_path, \"BT_slide9_predictive.png\"), width = 9, height = 4.5, dpi = 200)"
+  },
+  {
+    "objectID": "analysis/hf_analysis.html#output-summary",
+    "href": "analysis/hf_analysis.html#output-summary",
+    "title": "Healthy Future — Belgium Talk Analysis",
+    "section": "Output Summary",
+    "text": "Output Summary\n\nfigs   &lt;- list.files(fig_path,   pattern = \"*.png\", full.names = TRUE)\ntables &lt;- list.files(table_path, pattern = \"*.html|*.csv\", full.names = TRUE)\n\ncat(\"=== Figures ===\\n\")\n\n=== Figures ===\n\nwalk(figs, ~cat(sprintf(\"  %-45s  %s KB\\n\", basename(.x), round(file.size(.x)/1024))))\n\n  BT_slide6_primary.png                          73 KB\n  BT_slide7_forest.png                           160 KB\n  BT_slide8_event.png                            204 KB\n  BT_slide9_predictive.png                       138 KB\n\ncat(\"\\n=== Tables ===\\n\")\n\n\n=== Tables ===\n\nwalk(tables, ~cat(sprintf(\"  %s\\n\", basename(.x))))\n\n  BT_slide6_primary.html\n  BT_slide9_predictive.html"
+  },
+  {
+    "objectID": "slides/hf_slides.html#ai-enhanced-curriculum-delivery-for-community-health-workers",
+    "href": "slides/hf_slides.html#ai-enhanced-curriculum-delivery-for-community-health-workers",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "text": "AI-Enhanced Curriculum Delivery for Community Health Workers\nEvidence and Design from the Healthy Future Platform\n\nSean Sylvia (UNC Chapel Hill) · Gary Darmstadt & Yunwei Chen (Stanford)\nAnn Weber & Siva Balakrishnan (University of Nevada, Reno)\n\nStanford REAP Conference · Irish College Leuven · March 28, 2026"
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-challenge-too-much-to-deliver-too-little-time",
+    "href": "slides/hf_slides.html#the-challenge-too-much-to-deliver-too-little-time",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The Challenge: Too Much to Deliver, Too Little Time",
+    "text": "The Challenge: Too Much to Deliver, Too Little Time\n\n\nThe prioritization problem is unavoidable\n\nFamilies have complex, evolving health needs across pregnancy → 18 months\nA CHW has ~30 minutes per home visit\nDozens of content domains. Hundreds of families.\nStandard approach: all families at the same developmental stage get the same content\n\n\nThe question is not whether to prioritize — it’s who decides, and how.\n\n\nContent domains a CHW must navigate:\n\n\n\nDomain\nStage\n\n\n\n\nBreastfeeding initiation\nPrenatal → 0–6m\n\n\nComplementary feeding\n6–18m\n\n\nMaternal mental health\nAll stages\n\n\nPreventive health\nAll stages\n\n\nDaily care practices\nAll stages\n\n\nHealth service uptake\nAll stages\n\n\n\n\n\nFrame the core tension immediately. Don’t dwell — move to the platform in 2 minutes."
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-healthy-future-program",
+    "href": "slides/hf_slides.html#the-healthy-future-program",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The Healthy Future Program",
+    "text": "The Healthy Future Program\n\n\n\nCareLoom — the app behind the CHW visit\n\n\n📱\n\nApp-guided visits — CHW follows structured curriculum, app handles the decisions\n\n\n\n🗓️\n\nStage-based delivery — new content each 3-month stage, then reinforcement\n\n\n\n📶\n\nOffline-first — works in rural, low-connectivity settings\n\n\n\n🔓\n\nOpen-source MIT — github.com/DHEPLab\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nThe app removes the burden — CHWs don’t track where each family is or decide what to teach. The platform does."
+  },
+  {
+    "objectID": "slides/hf_slides.html#study-design",
+    "href": "slides/hf_slides.html#study-design",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Study Design",
+    "text": "Study Design\n\n\n\nCluster RCT — Rural China\n\n\n\n119 townships randomized(40 treat / 79 control)\n\n\n1,306 families enrolledacross 4 counties\n\n\n12 months of CHWhome visits\n\n\n88% follow-up rate(COVID-period)\n\n\n\n499 pregnant women enrolled · 807 families with infants &lt;6m Post-double-selection LASSO · County FEs · Cluster SEs (township)"
+  },
+  {
+    "objectID": "slides/hf_slides.html#primary-outcomes-what-we-found",
+    "href": "slides/hf_slides.html#primary-outcomes-what-we-found",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Primary Outcomes: What We Found",
+    "text": "Primary Outcomes: What We Found\n\n\n\n\n\n\n\n\n\n\n\n\nThree pre-specified primary outcomes\n\n\n\nOutcome\nEffect\np-value\n\n\n\n\nHemoglobin (g/dL)\n-0.207\n0.822\n\n\nExcl. Breastfeeding\n0.001\n0.99\n\n\nDietary Diversity\n0.246**\n0.024\n\n\n\n\nBiomarker outcomes (hemoglobin, growth) require longer time horizons. Dietary diversity and feeding practices are the proximate pathway — and where 12-month programs work first."
+  },
+  {
+    "objectID": "slides/hf_slides.html#secondary-outcomes-a-richer-picture",
+    "href": "slides/hf_slides.html#secondary-outcomes-a-richer-picture",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Secondary Outcomes: A Richer Picture",
+    "text": "Secondary Outcomes: A Richer Picture\n\n\nThese are the proximate mechanisms — where behavioral interventions work first. Note mental health effects are especially consistent."
+  },
+  {
+    "objectID": "slides/hf_slides.html#when-does-it-work-best-entry-timing",
+    "href": "slides/hf_slides.html#when-does-it-work-best-entry-timing",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "When Does It Work Best? Entry Timing",
+    "text": "When Does It Work Best? Entry Timing\n\n\nKey finding: Pregnancy enrollment consistently delivers the strongest gains. Programs that start CHW engagement only post-partum are missing the highest-return window."
+  },
+  {
+    "objectID": "slides/hf_slides.html#intermediate-outcomes-predict-long-run-trajectories",
+    "href": "slides/hf_slides.html#intermediate-outcomes-predict-long-run-trajectories",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Intermediate Outcomes Predict Long-Run Trajectories",
+    "text": "Intermediate Outcomes Predict Long-Run Trajectories\n\n\n\n\n\n\n\n\n\n\n\n\nWhat this shows\nIn the control group: families with better follow-up values on intermediate outcomes are on stronger child health trajectories.\nShort-term gains are leading indicators — not just proximate outcomes.\n\nHF 2.0 implication: Tracking these signals in real time creates a feedback loop for content adaptation — without waiting 12–24 months for child health outcomes.\nThis is the foundation for the surrogate index framework (Athey et al. 2019)."
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-design-limitation-same-stage-same-family",
+    "href": "slides/hf_slides.html#the-design-limitation-same-stage-same-family",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The Design Limitation: Same Stage ≠ Same Family",
+    "text": "The Design Limitation: Same Stage ≠ Same Family\n\n\nTwo families with a 3-month-old infant:\n\n\n\n\nFamily A\nFamily B\n\n\n\n\nInfant age\n3 months\n3 months\n\n\nBreastfeeding\nExclusive — going well\nNever initiated\n\n\nMental health\nThriving\nHigh depression score\n\n\nKnowledge\nHigh (2nd child)\nLow (1st child)\n\n\nContent received\nSame\nSame\n\n\n\nStage-based delivery treats them identically.\n\nWhat we can observe — but can’t yet act on:\n\nMaternal depression risk\nKnowledge gaps by domain\nPrior feeding practices\nCHW visit completion rate\nFamily engagement patterns\n\n\nWe can see this variation in the data. The current design can’t act on it. HF 2.0 will."
+  },
+  {
+    "objectID": "slides/hf_slides.html#healthy-future-2.0-the-vision",
+    "href": "slides/hf_slides.html#healthy-future-2.0-the-vision",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Healthy Future 2.0: The Vision",
+    "text": "Healthy Future 2.0: The Vision\n\n\nHF 1.0 → HF 2.0\nHF 1.0:\n  Stage X → Same content for all families\n\nHF 2.0:\n  Family characteristics  ┐\n  Response signals        ├→ Tailored content priority\n  CHW judgment            ┘\nTwo approaches we’re exploring:\n\nAI-based prioritization — Use family data + response patterns to rank content relevance. Algorithm-assisted, CHW-delivered.\nPreference-based tailoring — Give families structured choice over content priorities. Family knowledge + CHW expertise → the plan.\n\n\nOpen question: when does algorithmic tailoring outperform asking families directly?\n\n\nHF 2.0 — 3-Year Program\n\n\n\nPhase\nFocus\nYear\n\n\n\n\n1\nML analysis of HF 1.0 trajectories + qual research\nYr 1\n\n\n2\nAI-enhanced CareLoom + preference elicitation design\nYr 1–2\n\n\n3\nCommunity pilot: personalized vs. stage-based\nYr 3\n\n\n\nFunded by Cyrus Tang Foundation\nBuilt on CareLoom (open-source)\nStarting 2025"
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-lmic-personalization-challenge",
+    "href": "slides/hf_slides.html#the-lmic-personalization-challenge",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The LMIC Personalization Challenge",
+    "text": "The LMIC Personalization Challenge\n\n\nThe challenge isn’t the algorithm — it’s the signal\n\n\n\n\nOnline platform\nHF CHW program\n\n\n\n\nUsers\nMillions\n~1,000s\n\n\nFeedback signal\nClicks, seconds\nOutcomes, months\n\n\nData per user\nContinuous\n30 min/visit\n\n\nLearning speed\nFast\nSlow\n\n\n\nIn LMIC CHW programs, we have: - Limited observations per family - Long outcome horizons - Sparse measurement windows\nWe need to learn what works for whom — as fast as possible, from limited signal.\n\nTwo solutions:\n\nSurrogate index\nShort-term intermediate outcomes that predict long-run child health → generate usable optimization signal faster\n\n\nPreference elicitation\nFamilies have private knowledge about their circumstances → structured choice bypasses the cold-start data problem entirely"
+  },
+  {
+    "objectID": "slides/hf_slides.html#implications-for-scale",
+    "href": "slides/hf_slides.html#implications-for-scale",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Implications for Scale",
+    "text": "Implications for Scale\n\n\n\nThree actionable levers\n\n\n📅\n\nWhen — Enroll during pregnancy, not just post-partum\n\n\n\n🎯\n\nWhat — Personalize by family circumstances, not just stage\n\n\n\n📈\n\nHow — Use short-term signals to learn faster and adapt\n\n\n\nChina has ~1 million CHWs · Small per-family gains compound at national scale CareLoom is open-source — any MCH program can adapt it\n\n\n\nFor national program design\n\n\nThe entry-timing finding is the most immediately actionable result:\nPregnancy enrollment is a priority design choice.\nPrograms that begin CHW engagement only post-partum are systematically missing the highest-return window — and the data now shows by how much.\n\n\nHF 2.0 builds the next layer: moving from knowing when to start, to knowing what to deliver and to whom — at scale."
+  },
+  {
+    "objectID": "slides/hf_slides.html#summary",
+    "href": "slides/hf_slides.html#summary",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Summary",
+    "text": "Summary\n\n\n\n1\n\n\nThe program works\n\n\nSignificant effects on dietary diversity, feeding practices, maternal mental health, and caregiving knowledge — delivered through CHW home visits via CareLoom.\n\n\n\n\n2\n\n\nEarly entry matters\n\n\nFamilies enrolled during pregnancy see the strongest child health gains. Intermediate outcomes at follow-up predict long-run trajectories.\n\n\n\n\n3\n\n\nThe next frontier\n\n\nMoving from stage-based to circumstances-based personalization. HF 2.0 is a funded 3-year program — built on open-source CareLoom.\n\n\n\n\nWhen does algorithmic content tailoring outperform asking families directly what they need? HF 2.0 is designed to answer that question."
+  },
+  {
+    "objectID": "slides/hf_slides.html#section-1",
+    "href": "slides/hf_slides.html#section-1",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "",
+    "text": "Thank You\n\n\nSean Sylvia | sysylvia@email.unc.edu UNC Gillings School of Global Public Health\n\n\nCyrus Tang Foundation · Stanford REAP · UNC Gillings · University of Nevada, Reno Sichuan University · The CHWs and families who participated\n\n\nCareLoom platform: github.com/DHEPLab  ·  Slides & analysis: github.com/sysylvia/hf-belgium-talk"
+  },
+  {
+    "objectID": "slides/hf_slides.html#a1-post-double-selection-lasso",
+    "href": "slides/hf_slides.html#a1-post-double-selection-lasso",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "A1 — Post-Double-Selection LASSO",
+    "text": "A1 — Post-Double-Selection LASSO\nWhy this method?\n\nStandard RCT regression: add pre-specified controls; risk of omitting important predictors\nPDS-LASSO runs two separate LASSO procedures (on outcome and treatment) to identify which baseline covariates are strong predictors; includes those in the final regression\nResult: improved statistical power, reduced SEs, without arbitrary variable selection\nIn HF: baseline maternal dietary diversity was selected → controlling for it substantially reduced SEs on the DDS outcome (p: 0.051 → 0.035)\nIncreasingly standard in economics RCT papers; still novel in public health literature\n\nPre-generated controls in HF_main_anasam.dta:\n_CHILD_*, _FAM_*, _CARE_*, _CID_* — already constructed by the Stata pipeline; used directly in this R analysis."
+  },
+  {
+    "objectID": "slides/hf_slides.html#a2-surrogate-index-framework",
+    "href": "slides/hf_slides.html#a2-surrogate-index-framework",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "A2 — Surrogate Index Framework",
+    "text": "A2 — Surrogate Index Framework\nTechnical details (Athey et al. 2019)\nConstruct a composite \\(S\\) of short-run outcomes that together predict long-run outcome \\(Y\\) in the control group:\n\\[E[Y \\mid X, T] \\approx E[E[Y \\mid S, X] \\mid X, T]\\]\nIn HF context — candidate surrogates: - Dietary diversity score (6-month interim) - Breastfeeding practices - Caregiver knowledge index - Maternal depression score - Perceived social support\nHF 2.0 Phase 1: Formally estimate surrogate index; validate on HF 1.0 control group data; use as optimization target for content recommendation algorithm."
+  },
+  {
+    "objectID": "slides/hf_slides.html#a3-heterogeneous-effects",
+    "href": "slides/hf_slides.html#a3-heterogeneous-effects",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "A3 — Heterogeneous Effects",
+    "text": "A3 — Heterogeneous Effects\nSiva Balakrishnan’s parametric HTE analysis (UNR)\n\nEstimates treatment effect separately for family subgroups defined by baseline characteristics\n“Top 20%” finding: dietary diversity effects concentrated in high-predicted-response families\nEBF and hemoglobin: not significant even within subgroups\n\nFuture work (HF 2.0): - Causal forest / grf package for non-parametric CATE estimation - RATE analysis (Yadlowsky et al. 2021) to quantify targeting gains"
+  },
+  {
+    "objectID": "slides/hf_slides.html#section",
+    "href": "slides/hf_slides.html#section",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "",
+    "text": "AI-Enhanced Curriculum Deliveryfor Community Health Workers\n\n\nEvidence and Design from the Healthy Future Platform\n\n\nSean Sylvia (UNC Chapel Hill)  ·  Gary Darmstadt & Yunwei Chen (Stanford) Ann Weber & Siva Balakrishnan (University of Nevada, Reno)\n\n\nStanford REAP Conference  ·  Irish College Leuven  ·  March 28, 2026"
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-problem-one-visit-many-needs",
+    "href": "slides/hf_slides.html#the-problem-one-visit-many-needs",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The Problem: One Visit, Many Needs",
+    "text": "The Problem: One Visit, Many Needs\n\n\n\nA CHW has ~30 minutes per home visit\n\n\n👶\n\nBreastfeeding — initiation, exclusivity, timing\n\n\n\n🥗\n\nComplementary feeding — diversity, frequency\n\n\n\n🧠\n\nMaternal mental health — depression, anxiety\n\n\n\n🏥\n\nHealth service uptake — vaccines, checkups\n\n\n\n🤲\n\nDaily care & stimulation — responsive caregiving\n\n\n\n\n\n⏱️\n\n\n30 minutes\n\n\nper visit · dozens of families · hundreds of content decisions\n\n\n\nStandard approach: all families at the same developmental stage get the same content — regardless of circumstances."
+  },
+  {
+    "objectID": "slides/hf_slides.html#primary-outcomes",
+    "href": "slides/hf_slides.html#primary-outcomes",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Primary Outcomes",
+    "text": "Primary Outcomes\n\n\n\nHemoglobin Level\n\n\n\nNo effect\n\n\nβ = -0.207 · p = 0.82\n\n\n\nBiomarker outcomes needlonger time horizons\n\n\n\n\nExclusive Breastfeeding\n\n\n\nNo effect\n\n\nβ = 0.001 · p = 0.99\n\n\n\nBaseline rates alreadyrelatively high\n\n\n\n\nDietary Diversity Score\n\n\n\n↑ Significant\n\n\nβ = 0.246** · p = 0.02\n\n\n\nProximate pathway —where 12-month programs work first\n\n\n\n\nWhy dietary diversity? Feeding practice changes are the proximate pathway. Biomarker and growth effects require longer follow-up — this is expected, not a failure."
+  },
+  {
+    "objectID": "slides/hf_slides.html#secondary-outcomes-where-we-see-the-impact",
+    "href": "slides/hf_slides.html#secondary-outcomes-where-we-see-the-impact",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Secondary Outcomes: Where We See the Impact",
+    "text": "Secondary Outcomes: Where We See the Impact"
+  },
+  {
+    "objectID": "slides/hf_slides.html#short-term-signals-predict-long-run-health",
+    "href": "slides/hf_slides.html#short-term-signals-predict-long-run-health",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "Short-Term Signals Predict Long-Run Health",
+    "text": "Short-Term Signals Predict Long-Run Health\n\n\n\n\n\n\n\n\n\n\n\n\n\nWhat this shows\n\nIn the control group, families with better follow-up values on these intermediate outcomes are on stronger long-run child health trajectories.\nImplication: short-term gains are leading indicators — not just outputs.\n\nFor HF 2.0: Tracking these signals in real time creates a feedback loop for content adaptation — without waiting 12–24 months for child health outcomes.\nFoundation for the surrogate index framework (Athey et al. 2019)."
+  },
+  {
+    "objectID": "slides/hf_slides.html#hf-1.0-hf-2.0-the-evolution",
+    "href": "slides/hf_slides.html#hf-1.0-hf-2.0-the-evolution",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "HF 1.0 → HF 2.0: The Evolution",
+    "text": "HF 1.0 → HF 2.0: The Evolution\n\n\n\n\n\n\n\n\n\n\n\n\n\nThe gap HF 2.0 closes\n\n\nSame stage ≠ same family\nTwo families with a 3-month-old infant may have completely different needs — breastfeeding history, maternal depression, knowledge gaps — but HF 1.0 delivers identical content.\n\n\n🤖\n\nAI-based prioritization — rank content relevance from family data + response patterns\n\n\n\n🗣️\n\nPreference elicitation — structured family choice bypasses cold-start data problem\n\n\n\nFunded: Cyrus Tang Foundation · 3-year program · Starting 2025 Built on: CareLoom (open-source) · github.com/DHEPLab"
+  },
+  {
+    "objectID": "slides/hf_slides.html#the-personalization-challenge-in-lmic-settings",
+    "href": "slides/hf_slides.html#the-personalization-challenge-in-lmic-settings",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "The Personalization Challenge in LMIC Settings",
+    "text": "The Personalization Challenge in LMIC Settings\n\n\n\nThe challenge isn’t the algorithm — it’s the signal\n\n\n\n\n\n\n\n\n\n\n\n\nTwo solutions\n\n\nSurrogate index\nShort-term intermediate outcomes that predict long-run child health → generate usable optimization signal faster — without waiting years\n\n\nPreference elicitation\nFamilies have private knowledge about their own circumstances → structured choice bypasses the cold-start data problem entirely"
+  }
+]

@@ -9,3 +9,4 @@ _freeze/
 *.html
 
 /.quarto/
+!_site/
