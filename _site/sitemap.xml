@@ -2,10 +2,14 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://hf-belgium.ssylvia.io/analysis/hf_analysis.html</loc>
-    <lastmod>2026-03-27T10:57:12.506Z</lastmod>
+    <lastmod>2026-03-27T13:55:27.211Z</lastmod>
   </url>
   <url>
     <loc>https://hf-belgium.ssylvia.io/slides/hf_slides.html</loc>
-    <lastmod>2026-03-27T10:57:56.684Z</lastmod>
+    <lastmod>2026-03-27T15:12:44.661Z</lastmod>
+  </url>
+  <url>
+    <loc>https://hf-belgium.ssylvia.io/analysis/hf_heterogeneity.html</loc>
+    <lastmod>2026-03-27T14:41:24.631Z</lastmod>
   </url>
 </urlset>

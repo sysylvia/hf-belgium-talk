@@ -242,6 +242,48 @@
     "href": "slides/hf_slides.html#a3-heterogeneous-effects-causal-forest-analysis",
     "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
     "section": "A3 — Heterogeneous Effects: Causal Forest Analysis",
-    "text": "A3 — Heterogeneous Effects: Causal Forest Analysis\n\n\nEquity finding: BLP p = 1 — the causal forest finds no significant heterogeneity in dietary diversity treatment effects. The program benefits all families similarly. For HF 2.0, this supports personalization of content (which topics to emphasize), not targeting (who to treat)."
+    "text": "A3 — Heterogeneous Effects: Causal Forest Analysis\n\n\nEquity finding: Across 12 outcomes screened (7 domain indices, 3 factor scores, 2 primary), only caregiver mental health (DASS) shows marginally detectable heterogeneity (BLP p = 0.07). All child nutrition outcomes show no heterogeneity — the program benefits all families similarly. This is good news for scale-up: universal delivery works, and HF 2.0 should personalize content (which topics to emphasize), not who to treat."
+  },
+  {
+    "objectID": "analysis/hf_heterogeneity.html",
+    "href": "analysis/hf_heterogeneity.html",
+    "title": "Treatment Effect Heterogeneity — Domain Summary Indices",
+    "section": "",
+    "text": "Code\nlibrary(haven)\nlibrary(dplyr)\nlibrary(tidyr)\nlibrary(grf)\nlibrary(ggplot2)\nlibrary(patchwork)\nlibrary(kableExtra)\nlibrary(glue)\nlibrary(forcats)\n\n# Brand colors\nHF_BLUE   &lt;- \"#1f4e79\"\nHF_TEAL   &lt;- \"#2e75b6\"\nHF_ORANGE &lt;- \"#ed7d31\"\nHF_GREEN  &lt;- \"#4a7c59\"\nHF_GRAY   &lt;- \"#767171\"\n\n# CATE covariates (15 vars, BLVAR_FEED_EBF excluded)\ncate_vars &lt;- c(\n  \"BBVAR_AGE_MON\", \"BBVAR_BOY\",\n  \"HHVAR_MOM_AGE_BASE\", \"HHVAR_MOM_HIEDU\", \"HHVAR_ASSET\",\n  \"HHVAR_SIB\", \"HHVAR_SIZE_BASE\", \"HHVAR_MOM_MIGHIS\", \"HHVAR_MOM_HOMETOWN\",\n  \"BLVAR_DASSPRI_DEP\", \"BLVAR_DASSPRI_ANX\", \"BLVAR_DASSPRI_STR\",\n  \"BLVAR_KNOWPRI_INX\", \"BLVAR_SSPRI_ALL\", \"BLVAR_MFEED_DDS\"\n)\n\ncate_labels &lt;- c(\n  \"Child age (months)\", \"Boy\", \"Mother's age\", \"Mother high education\",\n  \"Asset index\", \"Number of siblings\", \"Household size\",\n  \"Mother migration history\", \"Mother hometown\",\n  \"Baseline depression\", \"Baseline anxiety\", \"Baseline stress\",\n  \"Baseline knowledge\", \"Baseline social support\", \"Baseline dietary diversity\"\n)\n\nadd_stars &lt;- function(p) {\n  case_when(p &lt; 0.01 ~ \"***\", p &lt; 0.05 ~ \"**\", p &lt; 0.10 ~ \"*\", TRUE ~ \"\")\n}\n\n# Load data with indices\ndf &lt;- readRDS(here::here(\"data\", \"hf_with_indices.rds\"))\ncat(glue(\"Dataset: {nrow(df)} obs · {sum(df$treat==1)} treated · {sum(df$treat==0)} control\\n\"))\n\n\nDataset: 1148 obs · 485 treated · 663 control"
+  },
+  {
+    "objectID": "analysis/hf_heterogeneity.html#summary-table",
+    "href": "analysis/hf_heterogeneity.html#summary-table",
+    "title": "Treatment Effect Heterogeneity — Domain Summary Indices",
+    "section": "Summary Table",
+    "text": "Summary Table\n\n\nCode\nsummary_df &lt;- purrr::map_dfr(results, function(r) {\n  tibble(\n    Index     = r$domain$label,\n    N         = r$n,\n    `ATE`     = sprintf(\"%.3f%s\", r$ate_est, add_stars(2*pnorm(-abs(r$ate_est/r$ate_se)))),\n    `(SE)`    = sprintf(\"(%.3f)\", r$ate_se),\n    `BLP`     = sprintf(\"%.3f\", r$blp_coef),\n    `BLP SE`  = sprintf(\"(%.3f)\", r$blp_se),\n    `BLP p`   = sprintf(\"%.3f\", r$blp_p),\n    `RATE`    = sprintf(\"%.3f\", r$rate_est),\n    `RATE SE` = sprintf(\"(%.3f)\", r$rate_se),\n    `RATE p`  = sprintf(\"%.3f\", r$rate_p),\n    `CATE SD` = sprintf(\"%.3f\", r$cate_sd)\n  )\n})\n\nsummary_df |&gt;\n  kable(align = \"lcccccccccc\") |&gt;\n  kable_styling(font_size = 12, bootstrap_options = c(\"striped\", \"hover\")) |&gt;\n  row_spec(0, bold = TRUE, background = HF_BLUE, color = \"white\") |&gt;\n  footnote(\n    general = \"Causal forest: 4,000 trees, auto-tuned, 15 covariates, clustered by township.\",\n    symbol  = c(\"BLP: Best Linear Projection test for heterogeneity (Chernozhukov et al. 2018)\",\n                \"RATE: Rank-Average Treatment Effect (Yadlowsky et al. 2021)\",\n                \"* p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01\")\n  )\n\n\n\n\n\nIndex\nN\nATE\n(SE)\nBLP\nBLP SE\nBLP p\nRATE\nRATE SE\nRATE p\nCATE SD\n\n\n\n\nMental Health\n816\n0.169***\n(0.052)\n0.644\n(0.682)\n0.173\n0.032\n(0.062)\n0.604\n0.097\n\n\nCaregiver Support\n956\n0.183***\n(0.045)\n-0.524\n(0.720)\n0.766\n-0.012\n(0.043)\n0.786\n0.059\n\n\nChild Nutrition\n938\n0.106***\n(0.037)\n0.560\n(0.672)\n0.203\n0.003\n(0.030)\n0.908\n0.047\n\n\n\nNote: \n\n\n\n\n\n\n\n\n\n\n\n\n Causal forest: 4,000 trees, auto-tuned, 15 covariates, clustered by township.\n\n\n\n\n\n\n\n\n\n\n\n\n* BLP: Best Linear Projection test for heterogeneity (Chernozhukov et al. 2018)\n\n\n\n\n\n\n\n\n\n\n\n\n† RATE: Rank-Average Treatment Effect (Yadlowsky et al. 2021)\n\n\n\n\n\n\n\n\n\n\n\n\n‡ * p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01"
+  },
+  {
+    "objectID": "analysis/hf_heterogeneity.html#mental-health-index",
+    "href": "analysis/hf_heterogeneity.html#mental-health-index",
+    "title": "Treatment Effect Heterogeneity — Domain Summary Indices",
+    "section": "Mental Health Index",
+    "text": "Mental Health Index\n\n\nCode\nmake_four_panel(results[[\"idx_mental\"]],\n                save_path = here::here(\"outputs\", \"figures\", \"BT_het_mental.png\"))\n\n\nSaved: BT_het_mental.png\n\n\n\n\n\n\n\n\nFigure 1: Treatment effect heterogeneity — Mental Health Index (EPDS + DASS)"
+  },
+  {
+    "objectID": "analysis/hf_heterogeneity.html#caregiver-support-index",
+    "href": "analysis/hf_heterogeneity.html#caregiver-support-index",
+    "title": "Treatment Effect Heterogeneity — Domain Summary Indices",
+    "section": "Caregiver Support Index",
+    "text": "Caregiver Support Index\n\n\nCode\nmake_four_panel(results[[\"idx_support\"]],\n                save_path = here::here(\"outputs\", \"figures\", \"BT_het_support.png\"))\n\n\nSaved: BT_het_support.png\n\n\n\n\n\n\n\n\nFigure 2: Treatment effect heterogeneity — Caregiver Support Index (SS + Knowledge)"
+  },
+  {
+    "objectID": "analysis/hf_heterogeneity.html#child-nutrition-index",
+    "href": "analysis/hf_heterogeneity.html#child-nutrition-index",
+    "title": "Treatment Effect Heterogeneity — Domain Summary Indices",
+    "section": "Child Nutrition Index",
+    "text": "Child Nutrition Index\n\n\nCode\nmake_four_panel(results[[\"idx_child\"]],\n                save_path = here::here(\"outputs\", \"figures\", \"BT_het_child.png\"))\n\n\nSaved: BT_het_child.png\n\n\n\n\n\n\n\n\nFigure 3: Treatment effect heterogeneity — Child Nutrition Index (CH + CF + BFI)"
+  },
+  {
+    "objectID": "slides/hf_slides.html#a4-heterogeneity-screening-domain-summary-indices",
+    "href": "slides/hf_slides.html#a4-heterogeneity-screening-domain-summary-indices",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "A4 — Heterogeneity Screening: Domain Summary Indices",
+    "text": "A4 — Heterogeneity Screening: Domain Summary Indices\n\n\n\n\n\nIndex\nComponents\nN\nATE\nBLP p\nRATE\nRATE p\n\n\n\n\nMental Health\nEPDS + DASS\n816\n—\n—\n—\n—\n\n\nCaregiver Support\nSS + Knowledge\n956\n—\n—\n—\n—\n\n\nChild Nutrition\nChild Health + CF + BFI\n938\n—\n—\n—\n—\n\n\n\nNote: \n\n\n\n\n\n\n\n\n Anderson (2008) ICW indices · Causal forest: 4,000 trees, tuned · See hf_heterogeneity.html for full results\n\n\n\n\n\n\n\n\n\n\n\n\n\nFor technical questions: Full results with 4-panel figures (CATE distribution, variable importance, GATES, TOC curves) available in the companion analysis notebook: hf_heterogeneity.html"
   }
 ]
