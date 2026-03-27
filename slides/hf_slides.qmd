@@ -799,14 +799,64 @@ $$E[Y \mid X, T] \approx E[E[Y \mid S, X] \mid X, T]$$
 
 ---
 
-## A3 — Heterogeneous Effects
+## A3 — Heterogeneous Effects: Causal Forest Analysis
 
-**Siva Balakrishnan's parametric HTE analysis (UNR)**
+```{r cate-appendix}
+#| fig-height: 3.8
+#| fig-width: 10
 
-- Estimates treatment effect separately for family subgroups defined by baseline characteristics
-- "Top 20%" finding: dietary diversity effects concentrated in high-predicted-response families
-- EBF and hemoglobin: not significant even within subgroups
+library(grf)
 
-**Future work (HF 2.0):**
-- Causal forest / `grf` package for non-parametric CATE estimation
-- RATE analysis (Yadlowsky et al. 2021) to quantify targeting gains
+cate_vars <- c(
+  "BBVAR_AGE_MON", "BBVAR_BOY",
+  "HHVAR_MOM_AGE_BASE", "HHVAR_MOM_HIEDU", "HHVAR_ASSET",
+  "HHVAR_SIB", "HHVAR_SIZE_BASE", "HHVAR_MOM_MIGHIS", "HHVAR_MOM_HOMETOWN",
+  "BLVAR_DASSPRI_DEP", "BLVAR_DASSPRI_ANX", "BLVAR_DASSPRI_STR",
+  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS", "BLVAR_FEED_EBF"
+)
+
+cf_df <- df |> select(all_of(c("FLVAR_FEED_DDS","treat","TID",cate_vars))) |> tidyr::drop_na()
+Y <- as.numeric(cf_df$FLVAR_FEED_DDS)
+W <- as.numeric(cf_df$treat)
+X <- cf_df |> select(all_of(cate_vars)) |> as.matrix()
+clusters <- as.integer(as.factor(cf_df$TID))
+
+set.seed(2026)
+cf <- causal_forest(X, Y, W, clusters=clusters, num.trees=2000, seed=2026)
+ate <- average_treatment_effect(cf)
+blp <- test_calibration(cf)
+blp_mat <- as.matrix(blp)
+blp_p <- blp_mat["differential.forest.prediction", ncol(blp_mat)]
+
+cates <- predict(cf)$predictions
+ate_est <- ate[["estimate"]]
+
+p1 <- ggplot(tibble(cate=cates), aes(x=cate)) +
+  geom_histogram(binwidth=0.05, fill=HF_TEAL, color="white", alpha=0.85) +
+  geom_vline(xintercept=ate_est, color=HF_ORANGE, linewidth=1.4) +
+  annotate("text", x=ate_est+0.02, y=Inf, label=glue("ATE = {round(ate_est,3)}"),
+           vjust=2, hjust=0, color=HF_ORANGE, fontface="bold", size=4) +
+  labs(title="CATE Distribution — Dietary Diversity",
+       subtitle=glue("BLP p = {round(blp_p,3)} — no significant heterogeneity"),
+       x="Estimated CATE", y="Count") +
+  theme_minimal(base_size=13) +
+  theme(plot.title=element_text(face="bold",color=HF_BLUE),
+        plot.subtitle=element_text(color=HF_GRAY))
+
+vi <- variable_importance(cf)
+vi_df <- tibble(variable=cate_vars, importance=as.numeric(vi)) |>
+  arrange(desc(importance)) |> slice_head(n=8) |>
+  mutate(variable=fct_reorder(variable, importance))
+
+p2 <- ggplot(vi_df, aes(x=importance, y=variable)) +
+  geom_col(fill=HF_BLUE, alpha=0.85) +
+  labs(title="Variable Importance", x="Importance", y=NULL) +
+  theme_minimal(base_size=13) +
+  theme(plot.title=element_text(face="bold",color=HF_BLUE))
+
+p1 + p2
+```
+
+::: {.key-finding}
+**Equity finding:** BLP p = `r round(blp_p,3)` — the causal forest finds **no significant heterogeneity** in dietary diversity treatment effects. The program benefits all families similarly. For HF 2.0, this supports personalization of **content** (which topics to emphasize), not **targeting** (who to treat).
+:::
