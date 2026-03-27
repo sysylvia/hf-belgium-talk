@@ -56,6 +56,16 @@ HF_ORANGE <- "#ed7d31"
 HF_GREEN  <- "#4a7c59"
 HF_GRAY   <- "#767171"
 
+# Load imputed data from 00_data_prep.R (if available)
+imputed_path <- here::here("data", "hf_analysis_full.rds")
+if (file.exists(imputed_path)) {
+  df <- readRDS(imputed_path)
+  cat(glue("Loaded imputed dataset: {nrow(df)} obs × {ncol(df)} vars\n"))
+} else {
+  cat("WARNING: No imputed data found. Run 00_data_prep.R first.\n")
+  cat("Falling back to raw .dta (CATE analysis will drop more observations)\n")
+}
+
 # LASSO-selected controls already in dataset
 lasso_cols <- df |> select(starts_with(c("_CHILD_", "_FAM_", "_CARE_", "_CID_"))) |> names()
 cat(glue("{length(lasso_cols)} LASSO control variables loaded\n"))
@@ -78,7 +88,7 @@ run_itt <- function(outcome, data = df) {
 }
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 6 — Primary Outcomes
 
@@ -163,7 +173,7 @@ primary_res |>
 ggsave(file.path(fig_path, "BT_slide6_primary.png"), width = 8, height = 2.5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 7 — Secondary Outcomes Forest Plot
 
@@ -241,7 +251,7 @@ ggplot(sec_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = group)
 ggsave(file.path(fig_path, "BT_slide7_forest.png"), width = 9, height = 5.5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 8 — Entry Timing Event Study
 
@@ -348,7 +358,7 @@ ggplot(event_res, aes(x = bin, y = b, ymin = ci_lo, ymax = ci_hi, color = sig, g
 ggsave(file.path(fig_path, "BT_slide8_event.png"), width = 9, height = 6.5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 9 — Intermediate Outcomes Predict Child Health
 
@@ -450,7 +460,7 @@ ggplot(surr_res, aes(y = label, x = b, xmin = ci_lo, xmax = ci_hi, color = sig))
 ggsave(file.path(fig_path, "BT_slide9_predictive.png"), width = 9, height = 4.5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 10 — CATE Estimation with Causal Forests {#slide10}
 
@@ -463,12 +473,15 @@ ggsave(file.path(fig_path, "BT_slide9_predictive.png"), width = 9, height = 4.5,
 library(grf)
 
 # Covariates: raw baseline variables (not LASSO-transformed controls)
+# NOTE: BLVAR_FEED_EBF excluded — 39% structurally missing (pregnancy enrollees)
+# Dropping it recovers ~250 observations for the causal forest (685 → 938)
+# Remaining missing values (70 across 10 vars) imputed via missForest in 00_data_prep.R
 cate_vars <- c(
   "BBVAR_AGE_MON", "BBVAR_BOY",
   "HHVAR_MOM_AGE_BASE", "HHVAR_MOM_HIEDU", "HHVAR_ASSET",
   "HHVAR_SIB", "HHVAR_SIZE_BASE", "HHVAR_MOM_MIGHIS", "HHVAR_MOM_HOMETOWN",
   "BLVAR_DASSPRI_DEP", "BLVAR_DASSPRI_ANX", "BLVAR_DASSPRI_STR",
-  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS", "BLVAR_FEED_EBF"
+  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS"
 )
 
 # Complete cases on outcome + treatment + covariates + cluster
@@ -674,7 +687,7 @@ ggplot(topk_res, aes(x = group, y = est, fill = sig)) +
 ggsave(file.path(fig_path, "BT_slide10_topk_targeting.png"), width = 9, height = 5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Slide 11 — RATE Analysis: Gains from Personalization {#slide11}
 
@@ -801,7 +814,7 @@ cat(glue(
 ))
 ```
 
----
+------------------------------------------------------------------------
 
 ## CATE Heterogeneity Screening Across All Outcomes {#cate-screen}
 
@@ -1104,17 +1117,17 @@ screen_results |>
   print()
 ```
 
-::: {.callout-note}
+::: callout-note
 **Heterogeneity Screening — Key Takeaways**
 
-The BLP test systematically assessed whether the Healthy Future program's treatment effects vary meaningfully across families for each of the 15 screened outcomes. Outcomes with a significant BLP p-value (< 0.10) indicate that the causal forest's predictions of *who benefits more* are statistically validated — the families predicted to benefit most actually do benefit most when evaluated out-of-bag.
+The BLP test systematically assessed whether the Healthy Future program's treatment effects vary meaningfully across families for each of the 15 screened outcomes. Outcomes with a significant BLP p-value (\< 0.10) indicate that the causal forest's predictions of *who benefits more* are statistically validated — the families predicted to benefit most actually do benefit most when evaluated out-of-bag.
 
 `r if(sum(screen_results$has_heterogeneity) > 0) { glue("**{sum(screen_results$has_heterogeneity)} outcome(s) show significant heterogeneity:** {paste(screen_results$outcome[screen_results$has_heterogeneity], collapse=', ')}. These are the strongest candidates for a full RATE (Rank-Weighted Average Treatment Effect) analysis and precision targeting in HF 2.0.") } else { "No outcomes showed statistically significant heterogeneity at the 10% level, suggesting that HF's treatment effects are broadly homogeneous across the population studied. This is itself informative: the program may benefit families similarly regardless of baseline characteristics, which reduces the case for selective targeting but strengthens the case for broad scale-up." }`
 
 For HF 2.0 design, outcomes exhibiting heterogeneity suggest that baseline assessments (child age, maternal mental health, household assets, baseline feeding practices) could be used to identify which families would benefit most from intensified or tailored intervention components — the core value proposition of a learning health system.
 :::
 
----
+------------------------------------------------------------------------
 
 ## Output Summary
 
@@ -1132,7 +1145,7 @@ cat("\n=== Tables ===\n")
 walk(tables, ~cat(sprintf("  %s\n", basename(.x))))
 ```
 
----
+------------------------------------------------------------------------
 
 ## Summary Index — Factor Analysis + Heterogeneity {#summary-index}
 
@@ -1297,7 +1310,7 @@ df |>
 ggsave(file.path(fig_path, "BT_summary_index_hist.png"), width = 9, height = 5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ### Step 2 — CATE on Summary Index
 
@@ -1502,7 +1515,7 @@ ggplot(topk_sum_res, aes(x = group, y = est, fill = sig)) +
 ggsave(file.path(fig_path, "BT_summary_topk.png"), width = 9, height = 5, dpi = 200)
 ```
 
----
+------------------------------------------------------------------------
 
 ### Step 3 — RATE on Summary Index
 
@@ -1614,7 +1627,7 @@ cat(glue(
 ))
 ```
 
----
+------------------------------------------------------------------------
 
 ### Step 4 — Narrative: What Does This Tell Us for HF 2.0?
 
@@ -1682,15 +1695,14 @@ cat(glue(
 ))
 ```
 
-::: {.callout-note}
+::: callout-note
 **Summary Index — Key Takeaways**
 
 The factor analysis summarizes the 7 domain indices into a single weighted composite (Factor 1) capturing their shared variance. This summary index allows a single, unified test of whether HF 2.0 can benefit from precision targeting across all outcomes simultaneously.
 
-- **Factor loadings** indicate which domains are most strongly tied to the shared program impact signal.
-- **The BLP test** on the summary index provides a more statistically powered test of heterogeneity than any individual outcome, because measurement noise partly cancels.
-- **The RATE and TOC curve** quantify how much efficiency could be gained by ranking and targeting families based on their predicted overall benefit from HF.
+-   **Factor loadings** indicate which domains are most strongly tied to the shared program impact signal.
+-   **The BLP test** on the summary index provides a more statistically powered test of heterogeneity than any individual outcome, because measurement noise partly cancels.
+-   **The RATE and TOC curve** quantify how much efficiency could be gained by ranking and targeting families based on their predicted overall benefit from HF.
 
 `r if(blp_sum_pval < 0.10) { glue("**Actionable finding:** The summary index BLP p = {round(blp_sum_pval, 4)} confirms that heterogeneity is present and structured — the causal forest's CATE predictions are validated. HF 2.0 should invest in baseline profiling to identify high-benefit families.") } else { glue("**Null finding is informative:** The summary index BLP p = {round(blp_sum_pval, 4)} suggests broadly consistent effects. HF 2.0's strongest case is universal scale-up, not selective targeting.") }`
 :::
-

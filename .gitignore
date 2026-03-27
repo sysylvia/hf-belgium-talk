@@ -1,5 +1,6 @@
 data/*.dta
 data/*.csv
+data/*.rds
 outputs/
 _site/
 _freeze/

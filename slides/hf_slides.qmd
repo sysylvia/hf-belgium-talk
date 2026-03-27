@@ -807,12 +807,13 @@ $$E[Y \mid X, T] \approx E[E[Y \mid S, X] \mid X, T]$$
 
 library(grf)
 
+# BLVAR_FEED_EBF excluded (39% structurally missing — pregnancy enrollees)
 cate_vars <- c(
   "BBVAR_AGE_MON", "BBVAR_BOY",
   "HHVAR_MOM_AGE_BASE", "HHVAR_MOM_HIEDU", "HHVAR_ASSET",
   "HHVAR_SIB", "HHVAR_SIZE_BASE", "HHVAR_MOM_MIGHIS", "HHVAR_MOM_HOMETOWN",
   "BLVAR_DASSPRI_DEP", "BLVAR_DASSPRI_ANX", "BLVAR_DASSPRI_STR",
-  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS", "BLVAR_FEED_EBF"
+  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS"
 )
 
 cf_df <- df |> select(all_of(c("FLVAR_FEED_DDS","treat","TID",cate_vars))) |> tidyr::drop_na()
