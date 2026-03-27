@@ -20,7 +20,7 @@ execute:
 ---
 
 ```{r setup}
-#| code-fold: false
+#| code-fold: true
 
 library(haven)
 library(dplyr)
