@@ -1,0 +1,419 @@
+---
+title: "Treatment Effect Heterogeneity — Domain Summary Indices"
+subtitle: "Healthy Future RCT · Stanford REAP Conference Analysis"
+author: "Sean Sylvia"
+date: "2026-03-27"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+    fig-width: 10
+    fig-height: 6
+    mainfont: "Source Sans Pro"
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| code-fold: false
+
+library(haven)
+library(dplyr)
+library(tidyr)
+library(grf)
+library(ggplot2)
+library(patchwork)
+library(kableExtra)
+library(glue)
+library(forcats)
+
+# Brand colors
+HF_BLUE   <- "#1f4e79"
+HF_TEAL   <- "#2e75b6"
+HF_ORANGE <- "#ed7d31"
+HF_GREEN  <- "#4a7c59"
+HF_GRAY   <- "#767171"
+
+# CATE covariates (15 vars, BLVAR_FEED_EBF excluded)
+cate_vars <- c(
+  "BBVAR_AGE_MON", "BBVAR_BOY",
+  "HHVAR_MOM_AGE_BASE", "HHVAR_MOM_HIEDU", "HHVAR_ASSET",
+  "HHVAR_SIB", "HHVAR_SIZE_BASE", "HHVAR_MOM_MIGHIS", "HHVAR_MOM_HOMETOWN",
+  "BLVAR_DASSPRI_DEP", "BLVAR_DASSPRI_ANX", "BLVAR_DASSPRI_STR",
+  "BLVAR_KNOWPRI_INX", "BLVAR_SSPRI_ALL", "BLVAR_MFEED_DDS"
+)
+
+cate_labels <- c(
+  "Child age (months)", "Boy", "Mother's age", "Mother high education",
+  "Asset index", "Number of siblings", "Household size",
+  "Mother migration history", "Mother hometown",
+  "Baseline depression", "Baseline anxiety", "Baseline stress",
+  "Baseline knowledge", "Baseline social support", "Baseline dietary diversity"
+)
+
+add_stars <- function(p) {
+  case_when(p < 0.01 ~ "***", p < 0.05 ~ "**", p < 0.10 ~ "*", TRUE ~ "")
+}
+
+# Load data with indices
+df <- readRDS(here::here("data", "hf_with_indices.rds"))
+cat(glue("Dataset: {nrow(df)} obs · {sum(df$treat==1)} treated · {sum(df$treat==0)} control\n"))
+```
+
+# Data & Index Construction
+
+Three domain summary indices are constructed using Anderson (2008) inverse-covariance-weighted (ICW) aggregation, based on the 3-factor structure identified via exploratory factor analysis.
+
+```{r indices-table}
+#| fig-cap: "Anderson ICW Domain Indices"
+
+domains <- list(
+  list(name = "idx_mental",  label = "Mental Health",     components = c("IN_EPDS", "IN_DASS"),
+       comp_labels = c("Maternal MH (EPDS)", "Caregiver MH (DASS)")),
+  list(name = "idx_support", label = "Caregiver Support", components = c("IN_SS", "IN_PRIKNOW_CH"),
+       comp_labels = c("Social Support", "Caregiving Knowledge")),
+  list(name = "idx_child",   label = "Child Nutrition",   components = c("IN_CH", "IN_CF", "IN_BFI"),
+       comp_labels = c("Child Health", "Complementary Feeding", "BF Initiation"))
+)
+
+# Descriptive statistics table
+desc_rows <- purrr::map_dfr(domains, function(d) {
+  x <- df[[d$name]]
+  tibble(
+    Index       = d$label,
+    Components  = paste(d$comp_labels, collapse = " + "),
+    N           = sum(!is.na(x)),
+    `Ctrl Mean` = round(mean(x[df$treat == 0], na.rm = TRUE), 3),
+    `Ctrl SD`   = round(sd(x[df$treat == 0], na.rm = TRUE), 3),
+    `Treat Mean`= round(mean(x[df$treat == 1], na.rm = TRUE), 3),
+    `Diff`      = round(mean(x[df$treat == 1], na.rm = TRUE) - mean(x[df$treat == 0], na.rm = TRUE), 3)
+  )
+})
+
+desc_rows |>
+  kable(align = "llccccc") |>
+  kable_styling(font_size = 13, bootstrap_options = c("striped", "hover")) |>
+  row_spec(0, bold = TRUE, background = HF_BLUE, color = "white") |>
+  footnote(general = "Anderson (2008) ICW indices. Standardized to control-group mean = 0, SD = 1.")
+```
+
+---
+
+# CATE Estimation, BLP, & RATE
+
+```{r cate-all}
+#| code-fold: true
+
+# Run causal forest for each domain index
+results <- list()
+
+for (d in domains) {
+  cat(glue("\n--- {d$label} ({d$name}) ---\n"))
+
+  cf_df <- df |>
+    select(all_of(c(d$name, "treat", "TID", cate_vars))) |>
+    drop_na()
+
+  Y <- as.numeric(cf_df[[d$name]])
+  W <- as.numeric(cf_df$treat)
+  X <- cf_df |> select(all_of(cate_vars)) |> as.matrix()
+  clusters <- as.integer(as.factor(cf_df$TID))
+
+  set.seed(2026)
+  cf <- causal_forest(X, Y, W,
+                      clusters = clusters,
+                      num.trees = 4000,
+                      tune.parameters = "all",
+                      seed = 2026)
+
+  ate   <- average_treatment_effect(cf)
+  blp   <- test_calibration(cf)
+  blp_m <- as.matrix(blp)
+  blp_p <- blp_m["differential.forest.prediction", ncol(blp_m)]
+
+  cates <- predict(cf)$predictions
+  rate  <- rank_average_treatment_effect(cf, cates)
+  rate_p <- 2 * pnorm(-abs(rate$estimate / rate$std.err))
+
+  vi <- variable_importance(cf)
+
+  results[[d$name]] <- list(
+    domain = d,
+    n      = nrow(cf_df),
+    ate_est = ate[["estimate"]], ate_se = ate[["std.err"]],
+    blp_coef = blp_m["differential.forest.prediction", "Estimate"],
+    blp_se   = blp_m["differential.forest.prediction", "Std. Error"],
+    blp_p    = blp_p,
+    rate_est = rate$estimate, rate_se = rate$std.err, rate_p = rate_p,
+    cate_sd  = sd(cates),
+    cates    = cates,
+    cf       = cf,
+    cf_df    = cf_df,
+    vi       = setNames(as.numeric(vi), cate_vars)
+  )
+
+  cat(glue("  N={nrow(cf_df)}, ATE={round(ate[['estimate']],4)}, BLP p={round(blp_p,4)}, RATE={round(rate$estimate,4)} (p={round(rate_p,4)})\n"))
+}
+```
+
+## Summary Table
+
+```{r summary-table}
+summary_df <- purrr::map_dfr(results, function(r) {
+  tibble(
+    Index     = r$domain$label,
+    N         = r$n,
+    `ATE`     = sprintf("%.3f%s", r$ate_est, add_stars(2*pnorm(-abs(r$ate_est/r$ate_se)))),
+    `(SE)`    = sprintf("(%.3f)", r$ate_se),
+    `BLP`     = sprintf("%.3f", r$blp_coef),
+    `BLP SE`  = sprintf("(%.3f)", r$blp_se),
+    `BLP p`   = sprintf("%.3f", r$blp_p),
+    `RATE`    = sprintf("%.3f", r$rate_est),
+    `RATE SE` = sprintf("(%.3f)", r$rate_se),
+    `RATE p`  = sprintf("%.3f", r$rate_p),
+    `CATE SD` = sprintf("%.3f", r$cate_sd)
+  )
+})
+
+summary_df |>
+  kable(align = "lcccccccccc") |>
+  kable_styling(font_size = 12, bootstrap_options = c("striped", "hover")) |>
+  row_spec(0, bold = TRUE, background = HF_BLUE, color = "white") |>
+  footnote(
+    general = "Causal forest: 4,000 trees, auto-tuned, 15 covariates, clustered by township.",
+    symbol  = c("BLP: Best Linear Projection test for heterogeneity (Chernozhukov et al. 2018)",
+                "RATE: Rank-Average Treatment Effect (Yadlowsky et al. 2021)",
+                "* p<0.10, ** p<0.05, *** p<0.01")
+  )
+```
+
+---
+
+# Four-Panel Figures
+
+```{r figure-function}
+#| code-fold: true
+
+make_four_panel <- function(r, save_path = NULL) {
+  cates   <- r$cates
+  ate_est <- r$ate_est
+  label   <- r$domain$label
+
+  # 1. CATE Distribution
+  p1 <- ggplot(tibble(cate = cates), aes(x = cate)) +
+    geom_histogram(aes(y = after_stat(density)), bins = 30,
+                   fill = HF_TEAL, color = "white", alpha = 0.8) +
+    geom_density(color = HF_BLUE, linewidth = 1) +
+    geom_vline(xintercept = ate_est, color = HF_ORANGE, linewidth = 1.3) +
+    annotate("text", x = ate_est, y = Inf, label = glue("ATE = {round(ate_est, 3)}"),
+             vjust = 2, hjust = -0.1, color = HF_ORANGE, fontface = "bold", size = 3.8) +
+    labs(title = "(a) CATE Distribution", x = "Estimated CATE", y = "Density") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", color = HF_BLUE))
+
+  # 2. Variable Importance
+  vi_df <- tibble(variable = cate_labels, importance = r$vi) |>
+    arrange(desc(importance)) |> slice_head(n = 8) |>
+    mutate(variable = fct_reorder(variable, importance))
+
+  p2 <- ggplot(vi_df, aes(x = importance, y = variable)) +
+    geom_col(fill = HF_BLUE, alpha = 0.85) +
+    geom_text(aes(label = round(importance, 3)), hjust = -0.1, size = 3, color = HF_GRAY) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.25))) +
+    labs(title = "(b) Variable Importance", x = "Importance", y = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", color = HF_BLUE))
+
+  # 3. GATES (quintile ATEs)
+  cf_df <- r$cf_df
+  cf_df$cate <- cates
+  cf_df$quintile <- cut(cates, breaks = quantile(cates, probs = 0:5/5),
+                        include.lowest = TRUE, labels = paste0("Q", 1:5))
+
+  gates <- cf_df |>
+    group_by(quintile) |>
+    summarise(
+      mu1 = mean(.data[[r$domain$name]][treat == 1], na.rm = TRUE),
+      mu0 = mean(.data[[r$domain$name]][treat == 0], na.rm = TRUE),
+      n1  = sum(treat == 1),
+      n0  = sum(treat == 0),
+      .groups = "drop"
+    ) |>
+    mutate(
+      ate = mu1 - mu0,
+      se  = sqrt((mu1*(1-mu1)/pmax(n1,1)) + (mu0*(1-mu0)/pmax(n0,1))),
+      # Neyman SE for continuous outcomes
+      ate_se = NA_real_
+    )
+
+  # Recompute SE properly for continuous outcomes
+  gates_proper <- cf_df |>
+    group_by(quintile) |>
+    summarise(
+      ate = mean(.data[[r$domain$name]][treat == 1], na.rm = TRUE) -
+            mean(.data[[r$domain$name]][treat == 0], na.rm = TRUE),
+      se  = sqrt(var(.data[[r$domain$name]][treat == 1], na.rm = TRUE) / sum(treat == 1) +
+                 var(.data[[r$domain$name]][treat == 0], na.rm = TRUE) / sum(treat == 0)),
+      n   = n(),
+      .groups = "drop"
+    )
+
+  p3 <- ggplot(gates_proper, aes(x = quintile, y = ate)) +
+    geom_hline(yintercept = ate_est, linetype = "dashed", color = HF_ORANGE, linewidth = 0.8) +
+    geom_col(fill = HF_TEAL, alpha = 0.7, width = 0.6) +
+    geom_errorbar(aes(ymin = ate - 1.96*se, ymax = ate + 1.96*se),
+                  width = 0.2, linewidth = 0.8, color = HF_BLUE) +
+    geom_text(aes(label = round(ate, 3), y = ate + sign(ate)*1.96*se),
+              vjust = ifelse(gates_proper$ate >= 0, -0.5, 1.5), size = 3, fontface = "bold") +
+    labs(title = "(c) GATES — Quintile Treatment Effects",
+         subtitle = "Q1 = lowest predicted · Q5 = highest predicted",
+         x = "CATE Quintile", y = "Group ATE (95% CI)") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", color = HF_BLUE),
+          plot.subtitle = element_text(color = HF_GRAY, size = 9))
+
+  # 4. TOC Curve
+  rate_obj <- rank_average_treatment_effect(r$cf, cates)
+  toc_raw  <- as_tibble(rate_obj$TOC)
+  names(toc_raw) <- tolower(names(toc_raw))
+  toc <- toc_raw |>
+    rename_with(~case_when(
+      . %in% c("fraction","q")           ~ "fraction",
+      . %in% c("estimate","toc")         ~ "toc_est",
+      . %in% c("std.err","se","stderr")  ~ "toc_se",
+      TRUE ~ .
+    )) |>
+    mutate(ci_lo = toc_est - 1.96*toc_se, ci_hi = toc_est + 1.96*toc_se)
+
+  p4 <- ggplot(toc, aes(x = fraction, y = toc_est)) +
+    geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), fill = HF_BLUE, alpha = 0.12) +
+    geom_line(color = HF_BLUE, linewidth = 1.2) +
+    geom_hline(yintercept = ate_est, color = HF_ORANGE, linewidth = 0.8, linetype = "dashed") +
+    annotate("text", x = 0.05, y = ate_est, label = glue("ATE = {round(ate_est, 3)}"),
+             vjust = -1, hjust = 0, color = HF_ORANGE, fontface = "bold", size = 3.5) +
+    annotate("text", x = 0.5, y = max(toc$toc_est, na.rm = TRUE) * 0.9,
+             label = glue("RATE = {round(r$rate_est, 3)} (p = {round(r$rate_p, 3)})"),
+             color = HF_BLUE, fontface = "bold", size = 3.8) +
+    scale_x_continuous(labels = scales::percent) +
+    labs(title = "(d) TOC Curve — Targeting Gains",
+         x = "Fraction treated (ranked by predicted benefit)",
+         y = "ATE for treated fraction") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", color = HF_BLUE))
+
+  # Combine
+  combined <- (p1 | p2) / (p3 | p4) +
+    plot_annotation(
+      title = glue("Treatment Effect Heterogeneity: {label}"),
+      subtitle = glue("N = {r$n} · ATE = {round(ate_est, 3)} · BLP p = {round(r$blp_p, 3)} · RATE = {round(r$rate_est, 3)} (p = {round(r$rate_p, 3)})"),
+      theme = theme(
+        plot.title = element_text(face = "bold", color = HF_BLUE, size = 14),
+        plot.subtitle = element_text(color = HF_GRAY, size = 11)
+      )
+    )
+
+  if (!is.null(save_path)) {
+    ggsave(save_path, combined, width = 14, height = 10, dpi = 200)
+    cat(glue("  Saved: {basename(save_path)}\n"))
+  }
+
+  combined
+}
+```
+
+## Mental Health Index
+
+```{r fig-mental}
+#| fig-height: 10
+#| fig-width: 14
+#| fig-cap: "Treatment effect heterogeneity — Mental Health Index (EPDS + DASS)"
+
+make_four_panel(results[["idx_mental"]],
+                save_path = here::here("outputs", "figures", "BT_het_mental.png"))
+```
+
+## Caregiver Support Index
+
+```{r fig-support}
+#| fig-height: 10
+#| fig-width: 14
+#| fig-cap: "Treatment effect heterogeneity — Caregiver Support Index (SS + Knowledge)"
+
+make_four_panel(results[["idx_support"]],
+                save_path = here::here("outputs", "figures", "BT_het_support.png"))
+```
+
+## Child Nutrition Index
+
+```{r fig-child}
+#| fig-height: 10
+#| fig-width: 14
+#| fig-cap: "Treatment effect heterogeneity — Child Nutrition Index (CH + CF + BFI)"
+
+make_four_panel(results[["idx_child"]],
+                save_path = here::here("outputs", "figures", "BT_het_child.png"))
+```
+
+---
+
+# Interpretation
+
+```{r interpretation}
+#| code-fold: false
+#| output: asis
+
+for (r in results) {
+  blp_sig <- r$blp_p < 0.20
+  rate_sig <- r$rate_p < 0.10
+
+  cat(glue("\n\n::: {{.callout-{ifelse(blp_sig, 'important', 'note')}}}\n"))
+  cat(glue("## {r$domain$label}\n\n"))
+  cat(glue("**BLP test:** p = {round(r$blp_p, 4)} — "))
+  if (r$blp_p < 0.05) {
+    cat("significant heterogeneity detected at 5% level.\n\n")
+  } else if (r$blp_p < 0.10) {
+    cat("marginally significant heterogeneity (p < 0.10).\n\n")
+  } else if (r$blp_p < 0.20) {
+    cat("suggestive heterogeneity (p < 0.20).\n\n")
+  } else {
+    cat("no significant heterogeneity detected.\n\n")
+  }
+
+  cat(glue("**RATE:** {round(r$rate_est, 4)} (SE = {round(r$rate_se, 4)}, p = {round(r$rate_p, 4)}) — "))
+  if (rate_sig && r$rate_est > 0) {
+    cat("positive targeting gains: prioritizing predicted high-responders would improve efficiency.\n\n")
+  } else if (rate_sig && r$rate_est < 0) {
+    cat("negative targeting signal: the families predicted to benefit most are NOT actually responding more.\n\n")
+  } else {
+    cat("no significant targeting gains from personalization.\n\n")
+  }
+
+  cat(glue("**CATE SD:** {round(r$cate_sd, 4)} — "))
+  if (r$cate_sd < 0.05) {
+    cat("very compressed distribution, minimal predicted variation.\n")
+  } else if (r$cate_sd < 0.15) {
+    cat("moderate predicted variation.\n")
+  } else {
+    cat("substantial predicted variation.\n")
+  }
+
+  cat(":::\n")
+}
+```
+
+---
+
+# Technical Notes
+
+**Index construction:** Anderson (2008) inverse-covariance-weighted indices. Each component standardized to control-group mean = 0, SD = 1. Weights derived from the inverse of the pairwise covariance matrix among control-group components.
+
+**Causal forest:** `grf::causal_forest()` with 4,000 trees, auto-tuned hyperparameters, honest splitting, clustered by township (TID). 15 baseline covariates (BLVAR_FEED_EBF excluded due to 39% structural missingness among pregnancy enrollees).
+
+**BLP test:** Best Linear Projection calibration test (Chernozhukov, Demirer, Duflo, Fernández-Val 2018). Tests whether units predicted to have higher CATEs actually experience larger treatment effects.
+
+**RATE:** Rank-Average Treatment Effect (Yadlowsky, Fleming, Shah, Sabatti, Wager 2021). Quantifies the expected gain from targeting based on predicted CATEs, using out-of-bag predictions for honest evaluation.
