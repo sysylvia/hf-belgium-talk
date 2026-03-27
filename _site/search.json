@@ -60,7 +60,7 @@
     "href": "slides/hf_slides.html#the-healthy-future-program",
     "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
     "section": "The Healthy Future Program",
-    "text": "The Healthy Future Program\n\n\n\nCareLoom — the app behind the CHW visit\n\n\n📱\n\nApp-guided visits — CHW follows structured curriculum, app handles the decisions\n\n\n\n🗓️\n\nStage-based delivery — new content each 3-month stage, then reinforcement\n\n\n\n📶\n\nOffline-first — works in rural, low-connectivity settings\n\n\n\n🔓\n\nOpen-source MIT — github.com/DHEPLab\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nThe app removes the burden — CHWs don’t track where each family is or decide what to teach. The platform does."
+    "text": "The Healthy Future Program\n\n\n\nCareLoom — the app behind the CHW visit\n\n\n📱\n\nApp-guided visits — CHW follows structured curriculum, app handles the decisions\n\n\n\n🗓️\n\nStage-based delivery — new content each 3-month stage, then reinforcement\n\n\n\n📶\n\nOffline-first — works in rural, low-connectivity settings\n\n\n\n🔓\n\nOpen-source MIT — github.com/DHEPLab\n\n\n\nSee the app in action →\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nThe app removes the burden — CHWs don’t track where each family is or decide what to teach. The platform does."
   },
   {
     "objectID": "slides/hf_slides.html#study-design",
@@ -285,5 +285,19 @@
     "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
     "section": "A4 — Heterogeneity Screening: Domain Summary Indices",
     "text": "A4 — Heterogeneity Screening: Domain Summary Indices\n\n\n\n\n\nIndex\nComponents\nN\nATE\nBLP p\nRATE\nRATE p\n\n\n\n\nMental Health\nEPDS + DASS\n816\n—\n—\n—\n—\n\n\nCaregiver Support\nSS + Knowledge\n956\n—\n—\n—\n—\n\n\nChild Nutrition\nChild Health + CF + BFI\n938\n—\n—\n—\n—\n\n\n\nNote: \n\n\n\n\n\n\n\n\n Anderson (2008) ICW indices · Causal forest: 4,000 trees, tuned · See hf_heterogeneity.html for full results\n\n\n\n\n\n\n\n\n\n\n\n\n\nFor technical questions: Full results with 4-panel figures (CATE distribution, variable importance, GATES, TOC curves) available in the companion analysis notebook: hf_heterogeneity.html"
+  },
+  {
+    "objectID": "slides/hf_slides.html#what-chws-deliver-12-modules-across-development-stages",
+    "href": "slides/hf_slides.html#what-chws-deliver-12-modules-across-development-stages",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "What CHWs Deliver: 12 Modules Across Development Stages",
+    "text": "What CHWs Deliver: 12 Modules Across Development Stages\n\n\n\nHealthy Future curriculum: 12 content modules delivered from pregnancy through 18 months, covering nutrition, breastfeeding, preventive care, and mental health\n\n\n\n\n\nCompletion: 82% of treated families participated. On average, families received 10.5 home visits and completed modules across breastfeeding (7.5), complementary feeding (6.7), preventive care (6.5), and mental health (5.2)."
+  },
+  {
+    "objectID": "slides/hf_slides.html#a5-from-heterogeneity-to-equity-two-studies",
+    "href": "slides/hf_slides.html#a5-from-heterogeneity-to-equity-two-studies",
+    "title": "AI-Enhanced Curriculum Delivery for Community Health Workers",
+    "section": "A5 — From Heterogeneity to Equity: Two Studies",
+    "text": "A5 — From Heterogeneity to Equity: Two Studies\n\n\n\nSylvia et al. (2021) — Parenting Intervention\n\n\n\n\nCATE density: bimodal distribution showing clear treatment effect heterogeneity\n\n\n\nSignificant heterogeneity detected. Disadvantaged children (low baseline parental investment) benefited +0.46 SD more than others. Top predictor: baseline parental investment (27% importance).\n\n\n\nHealthy Future 1.0 — This Study\n\n\n\n\n\n\n\n\n\n\n\nNo significant heterogeneity across 12 outcomes screened. The program benefits all families similarly — an equity finding. Program design, not family characteristics, drives impact.\n\n\n\nThe structured, app-guided delivery in Healthy Future equalizes outcomes across family types — a design feature, not a limitation. HF 2.0 should personalize content, not targeting."
   }
 ]

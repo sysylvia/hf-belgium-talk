@@ -131,6 +131,10 @@ Stanford REAP Conference &nbsp;·&nbsp; Irish College Leuven &nbsp;·&nbsp; Marc
 <div class="visual-box"><span class="icon">📶</span><div><strong>Offline-first</strong> — works in rural, low-connectivity settings</div></div>
 <div class="visual-box"><span class="icon">🔓</span><div><strong>Open-source MIT</strong> — github.com/DHEPLab</div></div>
 
+<div style="margin-top: 0.6em; font-size: 0.85em;">
+[**See the app in action →**](https://www.canva.com/design/DAG_D0qj1Ec/jv1UuoK_JNEK8PZM6CMg0g/view){target="_blank" style="color: #2e75b6; font-weight: 600;"}
+</div>
+
 :::
 ::: {.column width="50%"}
 
@@ -234,6 +238,27 @@ ggplot(stats, aes(x = reorder(label, pct), y = pct, fill = color)) +
         panel.grid.minor = element_blank(),
         axis.text = element_text(size = 13))
 ```
+
+:::
+:::
+
+---
+
+## What CHWs Deliver: 12 Modules Across Development Stages
+
+![Healthy Future curriculum: 12 content modules delivered from pregnancy through 18 months, covering nutrition, breastfeeding, preventive care, and mental health](../images/HF-Fig1.png){fig-alt="Timeline showing 12 intervention modules from pregnancy through 18 months" width="95%"}
+
+::: columns
+::: {.column width="55%"}
+
+::: {.key-finding style="font-size: 0.9em;"}
+**Completion:** 82% of treated families participated. On average, families received **10.5 home visits** and completed modules across breastfeeding (7.5), complementary feeding (6.7), preventive care (6.5), and mental health (5.2).
+:::
+
+:::
+::: {.column width="45%"}
+
+![](../images/HF-Table2.png){width="100%"}
 
 :::
 :::
@@ -893,4 +918,57 @@ screening_data |>
 
 ::: {.policy}
 **For technical questions:** Full results with 4-panel figures (CATE distribution, variable importance, GATES, TOC curves) available in the companion analysis notebook: `hf_heterogeneity.html`
+:::
+
+---
+
+## A5 — From Heterogeneity to Equity: Two Studies
+
+::: columns
+::: {.column width="50%"}
+
+<div style="font-size: 1.0em; font-weight: 600; color: #1f4e79; margin-bottom: 0.5em;">Sylvia et al. (2021) — Parenting Intervention</div>
+
+![CATE density: bimodal distribution showing clear treatment effect heterogeneity](../images/QQ-CATE-1.png){width="90%"}
+
+::: {.key-finding style="font-size: 0.85em;"}
+**Significant heterogeneity detected.** Disadvantaged children (low baseline parental investment) benefited **+0.46 SD more** than others. Top predictor: baseline parental investment (27% importance).
+:::
+
+:::
+::: {.column width="50%"}
+
+<div style="font-size: 1.0em; font-weight: 600; color: #4a7c59; margin-bottom: 0.5em;">Healthy Future 1.0 — This Study</div>
+
+```{r cate-contrast}
+#| fig-height: 3
+#| fig-width: 4.5
+
+# Load CATE results from the comprehensive screening
+cate_res <- readRDS(here::here("data", "cate_results.rds"))
+dds_cates <- cate_res[["FLVAR_FEED_DDS"]]$cates
+ate_dds   <- cate_res[["FLVAR_FEED_DDS"]]$ate_est
+
+ggplot(tibble(cate = dds_cates), aes(x = cate)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 25,
+                 fill = HF_GREEN, color = "white", alpha = 0.8) +
+  geom_density(color = "#2c5f3a", linewidth = 1) +
+  geom_vline(xintercept = ate_dds, color = HF_ORANGE, linewidth = 1.2) +
+  labs(title = "CATE Density — Dietary Diversity",
+       subtitle = "Compressed: all families benefit similarly",
+       x = "Estimated CATE", y = "Density") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c5f3a"),
+        plot.subtitle = element_text(color = HF_GRAY, size = 9))
+```
+
+::: {.policy style="font-size: 0.85em;"}
+**No significant heterogeneity** across 12 outcomes screened. The program benefits **all families similarly** — an equity finding. Program design, not family characteristics, drives impact.
+:::
+
+:::
+:::
+
+::: {.key-finding style="margin-top: 0.5em; text-align: center; font-size: 0.95em;"}
+*The structured, app-guided delivery in Healthy Future equalizes outcomes across family types — a design feature, not a limitation. HF 2.0 should personalize content, not targeting.*
 :::
